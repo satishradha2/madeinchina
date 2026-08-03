@@ -2770,26 +2770,41 @@ class App(ctk.CTk):
                 self.after(0, lambda: messagebox.showwarning("No Data", "No quotes found in database to organize."))
                 return
                 
+            # Group by unique source filename to avoid duplicating the same source file
+            from collections import defaultdict
+            grouped = defaultdict(list)
+            for filename, supplier, product, validity in rows:
+                grouped[filename].append((supplier, product, validity))
+                
             organized_dir = os.path.join(self.selected_folder, "Organized_Quotes")
             os.makedirs(organized_dir, exist_ok=True)
             
             copied_count = 0
-            
-            # Map filenames to their full paths from self.files_list
             filename_to_path = {item[0]: item[1] for item in self.files_list}
             
-            for filename, supplier, product, validity in rows:
+            for filename, items in grouped.items():
                 src_path = filename_to_path.get(filename)
                 if not src_path:
-                    # Fallback to looking in self.selected_folder
                     src_path = os.path.join(self.selected_folder, filename)
                     
                 if not os.path.exists(src_path):
                     continue
                     
-                # Clean parts
+                # Use details from the first item to name the file
+                supplier, first_product, validity = items[0]
+                
+                # Get unique products in this file
+                unique_products = list(dict.fromkeys([it[1] for it in items if it[1] and it[1] != "N/A"]))
+                
+                if len(unique_products) > 1:
+                    clean_product = self.clean_filename_part(unique_products[0]) or "Product"
+                    clean_product = f"{clean_product}_etc"
+                elif len(unique_products) == 1:
+                    clean_product = self.clean_filename_part(unique_products[0]) or "Product"
+                else:
+                    clean_product = "Product"
+                    
                 clean_supplier = self.clean_filename_part(supplier) or "UnknownSupplier"
-                clean_product = self.clean_filename_part(product) or "Product"
                 
                 # Format date
                 date_part = ""
