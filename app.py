@@ -167,11 +167,10 @@ class App(ctk.CTk):
     def generate_with_fallback(self, content_list, prompt, json_response=True):
         models_to_try = [
             'gemini-2.0-flash-lite',
-            'gemini-2.5-flash-lite',
-            'gemini-3.5-flash-lite',
-            'gemini-3.6-flash',
-            'gemini-2.5-flash',
-            'gemini-2.0-flash'
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-8b',
+            'gemini-1.5-pro'
         ]
         
         # Caching optimization: Try the last successful model first!
