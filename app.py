@@ -216,7 +216,7 @@ class App(ctk.CTk):
                     err_msg = str(e).lower()
                     
                     # Check for quota or credit depletion error
-                    if "resource_exhausted" in err_msg or "429" in err_msg or "quota" in err_msg or "credits are depleted" in err_msg or "unsupported" in err_msg:
+                    if "resource_exhausted" in err_msg or "429" in err_msg or "quota" in err_msg or "credits are depleted" in err_msg or "unsupported location" in err_msg or "unsupported region" in err_msg or "unsupported api key" in err_msg:
                         # If the quota limit is 0 (blocked on this model), don't retry, just proceed to next model!
                         if "limit: 0" in err_msg:
                             break
@@ -1703,30 +1703,33 @@ class App(ctk.CTk):
             retries = 3
             while not success and retries > 0:
                 try:
-                    import mimetypes
-                    mime_type, _ = mimetypes.guess_type(path)
-                    if not mime_type:
-                        ext = os.path.splitext(path)[1].lower()
-                        if ext == ".pdf":
-                            mime_type = "application/pdf"
-                        elif ext == ".png":
-                            mime_type = "image/png"
-                        elif ext in {".jpg", ".jpeg"}:
-                            mime_type = "image/jpeg"
-                        elif ext == ".txt":
-                            mime_type = "text/plain"
-                        elif ext == ".xlsx":
-                            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        elif ext == ".xls":
-                            mime_type = "application/vnd.ms-excel"
-                        else:
-                            mime_type = "application/octet-stream"
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext in {".xlsx", ".xls"}:
+                        import pandas as pd
+                        df = pd.read_excel(path)
+                        csv_text = df.to_csv(index=False)
+                        content_list = [f"EXCEL SPREADSHEET CONTENT (CSV format):\n\n{csv_text}"]
+                    else:
+                        import mimetypes
+                        mime_type, _ = mimetypes.guess_type(path)
+                        if not mime_type:
+                            if ext == ".pdf":
+                                mime_type = "application/pdf"
+                            elif ext == ".png":
+                                mime_type = "image/png"
+                            elif ext in {".jpg", ".jpeg"}:
+                                mime_type = "image/jpeg"
+                            elif ext == ".txt":
+                                mime_type = "text/plain"
+                            else:
+                                mime_type = "application/octet-stream"
 
-                    with open(path, "rb") as f:
-                        file_bytes = f.read()
+                        with open(path, "rb") as f:
+                            file_bytes = f.read()
+                        content_list = [{"mime_type": mime_type, "data": file_bytes}]
 
                     response_text = self.generate_with_fallback(
-                        [{"mime_type": mime_type, "data": file_bytes}],
+                        content_list,
                         prompt
                     )
                     
@@ -1740,7 +1743,7 @@ class App(ctk.CTk):
                     success = True
                     
                     import time
-                    time.sleep(4.0)
+                    time.sleep(6.0)
                     
                 except Exception as e:
                     if "ResourceExhausted" in str(type(e)) or "429" in str(e):
