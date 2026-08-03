@@ -1546,7 +1546,7 @@ class App(ctk.CTk):
         processed = {row[0] for row in c.fetchall()}
         conn.close()
         
-        valid_exts = {".pdf", ".png", ".jpg", ".jpeg", ".txt"}
+        valid_exts = {".pdf", ".png", ".jpg", ".jpeg", ".txt", ".xlsx", ".xls"}
         if os.path.exists(self.selected_folder):
             for file in os.listdir(self.selected_folder):
                 ext = os.path.splitext(file)[1].lower()
@@ -1716,6 +1716,10 @@ class App(ctk.CTk):
                             mime_type = "image/jpeg"
                         elif ext == ".txt":
                             mime_type = "text/plain"
+                        elif ext == ".xlsx":
+                            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        elif ext == ".xls":
+                            mime_type = "application/vnd.ms-excel"
                         else:
                             mime_type = "application/octet-stream"
 
@@ -2698,7 +2702,7 @@ class App(ctk.CTk):
     def select_files(self):
         file_paths = filedialog.askopenfilenames(
             title="Select Supplier Quotes",
-            filetypes=[("Quote files", "*.pdf;*.png;*.jpg;*.jpeg;*.txt")]
+            filetypes=[("Quote files", "*.pdf;*.png;*.jpg;*.jpeg;*.txt;*.xlsx;*.xls")]
         )
         if not file_paths:
             return
