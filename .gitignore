@@ -1,0 +1,12 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Local Config and API keys (CRITICAL to avoid key leaks!)
+config.json
+
+# Local Databases
+quotes.db
+
+# Supplier data files (temp pdfs/images/videos)
+supplier_data/Organized_Quotes/
