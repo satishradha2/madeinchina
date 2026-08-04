@@ -504,53 +504,57 @@ class App(ctk.CTk):
         settings_card = ctk.CTkFrame(tab_settings, fg_color="#2b2b2b")
         settings_card.pack(pady=20, padx=20, fill="both", expand=True)
         
-        ctk.CTkLabel(settings_card, text="⚙️ Sourcing API & Environment Settings", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(20, 15), padx=20, anchor="w")
+        ctk.CTkLabel(settings_card, text="⚙️ Sourcing API & Environment Settings", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").pack(pady=(20, 15), padx=25, fill="x")
         
+        # Form Container for consistent padding & alignment
+        form_frame = ctk.CTkFrame(settings_card, fg_color="transparent")
+        form_frame.pack(padx=25, fill="x")
+
         # Provider selector
-        self.provider_lbl = ctk.CTkLabel(settings_card, text="API Provider:")
-        self.provider_lbl.pack(fill="x", padx=20, pady=(5, 2), anchor="w")
+        self.provider_lbl = ctk.CTkLabel(form_frame, text="API Provider:", anchor="w")
+        self.provider_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         
-        self.provider_cb = ctk.CTkComboBox(settings_card, values=["Google Gemini", "Custom OpenAI/Luna"], command=self.on_provider_changed, width=400)
-        self.provider_cb.pack(pady=2, padx=20, anchor="w")
+        self.provider_cb = ctk.CTkComboBox(form_frame, values=["Google Gemini", "Custom OpenAI/Luna"], command=self.on_provider_changed, width=400)
+        self.provider_cb.pack(pady=2, anchor="w")
         self.provider_cb.set("Google Gemini")
 
         # API Key
-        self.api_lbl = ctk.CTkLabel(settings_card, text="Gemini API Key:")
-        self.api_lbl.pack(fill="x", padx=20, pady=(5, 2), anchor="w")
+        self.api_lbl = ctk.CTkLabel(form_frame, text="Gemini API Key:", anchor="w")
+        self.api_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         
-        self.api_entry = ctk.CTkEntry(settings_card, placeholder_text="AIzaSy...", show="*", width=400)
-        self.api_entry.pack(pady=2, padx=20, anchor="w")
+        self.api_entry = ctk.CTkEntry(form_frame, placeholder_text="AIzaSy...", show="*", width=400)
+        self.api_entry.pack(pady=2, anchor="w")
         if self.api_key:
             self.api_entry.insert(0, self.api_key)
 
         # Custom API inputs
-        self.custom_api_frame = ctk.CTkFrame(settings_card, fg_color="transparent")
+        self.custom_api_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
         
-        self.base_url_lbl = ctk.CTkLabel(self.custom_api_frame, text="Base URL:")
+        self.base_url_lbl = ctk.CTkLabel(self.custom_api_frame, text="Base URL:", anchor="w")
         self.base_url_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         self.base_url_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="https://api.openai.com/v1", width=400)
         self.base_url_entry.pack(pady=2, anchor="w")
         self.base_url_entry.insert(0, "https://api.openai.com/v1")
         
-        self.model_lbl = ctk.CTkLabel(self.custom_api_frame, text="Model Name:")
+        self.model_lbl = ctk.CTkLabel(self.custom_api_frame, text="Model Name:", anchor="w")
         self.model_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         self.model_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="gpt-5.6-luna", width=400)
         self.model_entry.pack(pady=2, anchor="w")
         self.model_entry.insert(0, "gpt-5.6-luna")
 
-        self.btn_save_api = ctk.CTkButton(settings_card, text="Save & Test Key", command=self.save_and_test_key, width=200)
-        self.btn_save_api.pack(pady=15, padx=20, anchor="w")
+        self.btn_save_api = ctk.CTkButton(form_frame, text="Save & Test Key", command=self.save_and_test_key, width=200)
+        self.btn_save_api.pack(pady=15, anchor="w")
 
         # Safety Zone card inside Settings page
         safety_card = ctk.CTkFrame(settings_card, fg_color="#3c2424")
-        safety_card.pack(pady=20, padx=20, fill="x")
+        safety_card.pack(pady=20, padx=25, fill="x")
         
-        ctk.CTkLabel(safety_card, text="🚨 Danger Zone", font=ctk.CTkFont(weight="bold"), text_color="#ff8888").pack(anchor="w", padx=15, pady=(10, 5))
+        ctk.CTkLabel(safety_card, text="🚨 Danger Zone", font=ctk.CTkFont(weight="bold"), text_color="#ff8888", anchor="w").pack(anchor="w", padx=15, pady=(10, 5), fill="x")
         
         self.btn_clear_all = ctk.CTkButton(safety_card, text="🧹 Clear All Data", fg_color="#a83232", hover_color="#8c2626", command=self.clear_all_data)
         self.btn_clear_all.pack(side="left", padx=15, pady=(5, 15))
         
-        ctk.CTkLabel(safety_card, text="Warning: Clicking this button permanently purges all quotation records, scorecard data, compliance audits, and attachments from the local database.", font=ctk.CTkFont(size=11), text_color="grey").pack(side="left", padx=10, pady=(5, 15))
+        ctk.CTkLabel(safety_card, text="Warning: Clicking this button permanently purges all quotation records, scorecard data, compliance audits, and attachments from the local database.", font=ctk.CTkFont(size=11), text_color="grey", anchor="w").pack(side="left", padx=10, pady=(5, 15), fill="x", expand=True)
 
         # --- Re-grid Sourcing Grid elements inside subframe ---
         self.table_ctrl_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
@@ -1788,6 +1792,9 @@ class App(ctk.CTk):
         if hasattr(self, 'provider_cb'):
             self.provider_cb.set(self.api_provider)
             self.on_provider_changed(self.api_provider)
+        if hasattr(self, 'api_entry') and self.api_key:
+            self.api_entry.delete(0, tk.END)
+            self.api_entry.insert(0, self.api_key)
         if hasattr(self, 'base_url_entry'):
             self.base_url_entry.delete(0, tk.END)
             self.base_url_entry.insert(0, self.custom_base_url)
