@@ -783,17 +783,17 @@ class App(ctk.CTk):
         style.configure("Treeview",
                         background="#2b2b2b",
                         foreground="white",
-                        rowheight=25,
+                        rowheight=35,
                         fieldbackground="#2b2b2b",
                         borderwidth=0,
-                        font=("Segoe UI", 9))
+                        font=("Segoe UI", 11))
         style.map("Treeview", background=[("selected", "#1f538d")])
         
         style.configure("Treeview.Heading",
                         background="#3c3c3c",
                         foreground="white",
                         borderwidth=1,
-                        font=("Segoe UI", 9, "bold"))
+                        font=("Segoe UI", 11, "bold"))
         
         # Columns
         self.columns = ("id", "filename", "supplier", "product", "spec", "color", "elastic", "price", "unit", "moq", "packing", "term", "lead_time", "validity_date", "sourcing_risk")
@@ -3236,15 +3236,15 @@ class App(ctk.CTk):
         style.configure("Scorecard.Treeview",
                         background="#2b2b2b",
                         foreground="white",
-                        rowheight=30,
+                        rowheight=35,
                         fieldbackground="#2b2b2b",
                         borderwidth=0,
-                        font=("Segoe UI", 10))
+                        font=("Segoe UI", 11))
         style.map("Scorecard.Treeview", background=[('selected', '#1f538d')])
         style.configure("Scorecard.Treeview.Heading",
                         background="#1f538d",
                         foreground="white",
-                        font=("Segoe UI", 10, "bold"),
+                        font=("Segoe UI", 11, "bold"),
                         borderwidth=0)
 
         cols = ("Rank", "Supplier", "Product", "Price", "MOQ", "Lead Time", "Risk", "Score", "Rating")
