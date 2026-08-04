@@ -1319,6 +1319,12 @@ class App(ctk.CTk):
             self.update_uae_customs_tab()
         if hasattr(self, 'packing_product_cb'):
             self.update_container_packing_tab()
+        if hasattr(self, 'po_supplier_cb'):
+            self.load_po_suppliers()
+        if hasattr(self, 'inc_supplier_cb'):
+            self.load_incident_logs()
+        if hasattr(self, 'cny_slider'):
+            self.draw_hedge_chart()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
