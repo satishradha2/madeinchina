@@ -793,9 +793,7 @@ class App(ctk.CTk):
     def on_closing(self):
         self.is_extracting = False
         self.chat_is_extracting = False
-        self.destroy()
-        import sys
-        sys.exit(0)
+        self.quit()
 
     def get_validity_display(self, date_str):
         if not date_str or date_str.lower() in ["n/a", "null", "none", ""]:
@@ -3556,17 +3554,19 @@ class App(ctk.CTk):
             try:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                c.execute("SELECT severity FROM supplier_incidents WHERE supplier = ?", (self.clean_supplier_name(supplier),))
+                c.execute("SELECT supplier, severity FROM supplier_incidents")
                 incidents = c.fetchall()
                 conn.close()
                 
                 penalty = 0
                 for inc_row in incidents:
-                    sev = str(inc_row[0]).lower()
-                    if "high" in sev:
-                        penalty += 15
-                    elif "medium" in sev:
-                        penalty += 5
+                    inc_sup = self.clean_supplier_name(inc_row[0])
+                    if inc_sup == self.clean_supplier_name(supplier):
+                        sev = str(inc_row[1]).lower()
+                        if "high" in sev:
+                            penalty += 15
+                        elif "medium" in sev:
+                            penalty += 5
                 
                 risk_score = max(0.0, risk_score - penalty)
             except Exception as e:
@@ -6473,12 +6473,6 @@ Sourcing Action Guidance:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to log incident: {e}")
 
-            self.qc_inc_desc_entry.delete(0, tk.END)
-            messagebox.showinfo("Success", f"Operational incident ({inc_type} - {severity}) logged for {supplier}!")
-            self.load_all_quotes_from_db()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to log incident: {e}")
-
     def setup_defect_log_tab(self):
         tab_incidents = self.scorecard_tabview.tab("⚠️ Defect Log")
         tab_incidents.grid_columnconfigure(0, weight=1)
@@ -6552,7 +6546,7 @@ Sourcing Action Guidance:
         # Update dropdown values first
         suppliers = set()
         for r in self.extracted_data:
-            s = self.clean_supplier_name(r.get("supplier"))
+            s = r.get("supplier")
             if s and s != "Unknown":
                 suppliers.add(s)
         sorted_sups = sorted(list(suppliers))
@@ -6847,7 +6841,7 @@ Sourcing Action Guidance:
     def load_po_suppliers(self):
         suppliers = set()
         for r in self.extracted_data:
-            s = self.clean_supplier_name(r.get("supplier"))
+            s = r.get("supplier")
             if s and s != "Unknown":
                 suppliers.add(s)
         sorted_sups = sorted(list(suppliers))
@@ -6860,7 +6854,7 @@ Sourcing Action Guidance:
     def on_po_supplier_selected(self, choice):
         products = set()
         for r in self.extracted_data:
-            if self.clean_supplier_name(r.get("supplier")) == choice:
+            if r.get("supplier") == choice:
                 p = (r.get("product") or "").strip().title()
                 if p:
                     products.add(p)
@@ -6876,7 +6870,7 @@ Sourcing Action Guidance:
         self.po_active_price = 0.0
         self.po_active_quote = None
         for r in self.extracted_data:
-            if self.clean_supplier_name(r.get("supplier")) == supplier and (r.get("product") or "").strip().title() == choice:
+            if r.get("supplier") == supplier and (r.get("product") or "").strip().title() == choice:
                 self.po_active_quote = r
                 try:
                     self.po_active_price = float(r["price"])
@@ -7113,4 +7107,10 @@ Authorized Signature: ___________________________
 
 if __name__ == "__main__":
     app = App()
-    app.mainloop()
+    try:
+        app.mainloop()
+    finally:
+        try:
+            app.destroy()
+        except Exception:
+            pass
