@@ -343,6 +343,8 @@ class App(ctk.CTk):
         self.tabview.add("🏆 Supplier Scorecard")
         self.tabview.add("📅 Sourcing Timeline")
         self.tabview.add("📦 Landed Cost Simulator")
+        self.tabview.add("🎯 Purchase Optimizer")
+        self.tabview.add("📝 RFQ Generator")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -478,6 +480,12 @@ class App(ctk.CTk):
 
         # Setup Landed Cost Simulator tab
         self.setup_landed_cost_tab()
+
+        # Setup Purchase Optimizer tab
+        self.setup_purchase_optimizer_tab()
+
+        # Setup RFQ Generator tab
+        self.setup_rfq_generator_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -993,6 +1001,10 @@ class App(ctk.CTk):
         self.update_timeline_tab()
         if hasattr(self, 'sim_tree'):
             self.update_landed_cost_tab()
+        if hasattr(self, 'opt_scroll'):
+            self.update_purchase_optimizer_tab()
+        if hasattr(self, 'rfq_product_cb'):
+            self.update_rfq_generator_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -3986,6 +3998,577 @@ class App(ctk.CTk):
                 ),
                 tags=(tag,)
             )
+
+    def setup_purchase_optimizer_tab(self):
+        tab_opt = self.tabview.tab("🎯 Purchase Optimizer")
+        tab_opt.grid_columnconfigure(0, weight=1)
+        tab_opt.grid_columnconfigure(1, weight=1)
+        tab_opt.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_opt, text="Multi-Product Consolidated Purchase Optimizer", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Products & Quantities Selection ---
+        left_frame = ctk.CTkFrame(tab_opt)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="📦 Select Products & Quantities", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        self.opt_scroll = ctk.CTkScrollableFrame(left_frame, fg_color="#2b2b2b")
+        self.opt_scroll.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
+        self.opt_scroll.grid_columnconfigure(1, weight=1)
+
+        # Bottom logistics controls for optimizer
+        opt_ctrls = ctk.CTkFrame(left_frame, fg_color="transparent")
+        opt_ctrls.grid(row=2, column=0, padx=15, pady=10, sticky="ew")
+
+        ctk.CTkLabel(opt_ctrls, text="Freight per CBM ($):", font=ctk.CTkFont(size=11)).pack(side="left", padx=5)
+        self.opt_freight_rate_entry = ctk.CTkEntry(opt_ctrls, width=70)
+        self.opt_freight_rate_entry.pack(side="left", padx=5)
+        self.opt_freight_rate_entry.insert(0, "120")
+
+        ctk.CTkLabel(opt_ctrls, text="Duty (%):", font=ctk.CTkFont(size=11)).pack(side="left", padx=5)
+        self.opt_duty_entry = ctk.CTkEntry(opt_ctrls, width=60)
+        self.opt_duty_entry.pack(side="left", padx=5)
+        self.opt_duty_entry.insert(0, "6.5")
+
+        self.btn_run_opt = ctk.CTkButton(left_frame, text="⚡ Run Optimization", fg_color="#1f538d", hover_color="#153e6b", command=self.run_purchase_optimization)
+        self.btn_run_opt.grid(row=3, column=0, padx=15, pady=(5, 15), sticky="ew")
+
+        # --- RIGHT PANEL: Optimization Report ---
+        right_frame = ctk.CTkFrame(tab_opt)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="⚡ Optimization Results & Strategy", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        self.opt_results_scroll = ctk.CTkScrollableFrame(right_frame, fg_color="#2b2b2b")
+        self.opt_results_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
+        self.opt_results_scroll.grid_columnconfigure(0, weight=1)
+
+        # Placeholders
+        ctk.CTkLabel(self.opt_results_scroll, text="Select products and click Run Optimization.", text_color="grey").pack(pady=40)
+
+    def update_purchase_optimizer_tab(self):
+        current_selections = {}
+        if hasattr(self, 'opt_checkboxes'):
+            for p, cb in self.opt_checkboxes.items():
+                current_selections[p] = (cb.get(), self.opt_qty_entries[p].get())
+
+        for w in self.opt_scroll.winfo_children():
+            w.destroy()
+
+        self.opt_checkboxes = {}
+        self.opt_qty_entries = {}
+
+        unique_prods = set()
+        for r in self.extracted_data:
+            p = (r.get("product") or "").strip().title()
+            if p:
+                unique_prods.add(p)
+
+        if not unique_prods:
+            ctk.CTkLabel(self.opt_scroll, text="No products found in DB.", text_color="grey").pack(pady=20)
+            return
+
+        for idx, p in enumerate(sorted(list(unique_prods))):
+            row_fr = ctk.CTkFrame(self.opt_scroll, fg_color="transparent")
+            row_fr.pack(fill="x", pady=2, padx=5)
+
+            cb_var = tk.IntVar(value=1)
+            qty_val = "50000"
+
+            if p in current_selections:
+                cb_var.set(current_selections[p][0])
+                qty_val = current_selections[p][1]
+
+            cb = ctk.CTkCheckBox(row_fr, text=p, variable=cb_var, font=ctk.CTkFont(size=12))
+            cb.pack(side="left", padx=5)
+
+            qty_ent = ctk.CTkEntry(row_fr, width=90, font=ctk.CTkFont(size=11))
+            qty_ent.pack(side="right", padx=5)
+            qty_ent.insert(0, qty_val)
+
+            self.opt_checkboxes[p] = cb_var
+            self.opt_qty_entries[p] = qty_ent
+
+    def run_purchase_optimization(self):
+        for w in self.opt_results_scroll.winfo_children():
+            w.destroy()
+
+        selected_items = {}
+        for p, cb in self.opt_checkboxes.items():
+            if cb.get() == 1:
+                try:
+                    qty = int(self.opt_qty_entries[p].get().replace(",", "").strip())
+                    if qty > 0:
+                        selected_items[p.lower()] = qty
+                except Exception:
+                    pass
+
+        if not selected_items:
+            ctk.CTkLabel(self.opt_results_scroll, text="❌ Please select at least one product with a valid quantity.", text_color="#ffa6a6").pack(pady=20)
+            return
+
+        try:
+            freight_rate = float(self.opt_freight_rate_entry.get().strip())
+        except Exception:
+            freight_rate = 120.0
+        try:
+            duty_percent = float(self.opt_duty_entry.get().strip())
+        except Exception:
+            duty_percent = 6.5
+
+        quotes_by_product = {}
+        for r in self.extracted_data:
+            p = (r.get("product") or "").strip().lower()
+            if p in selected_items:
+                if p not in quotes_by_product:
+                    quotes_by_product[p] = []
+                quotes_by_product[p].append(r)
+
+        split_items = []
+        total_split_fob = 0.0
+        total_split_cbm = 0.0
+        suppliers_used = set()
+
+        for p_name, qty in selected_items.items():
+            options = quotes_by_product.get(p_name, [])
+            if not options:
+                continue
+            valid_opts = [o for o in options if o.get("price") is not None and o.get("price") != "N/A"]
+            if not valid_opts:
+                continue
+            valid_opts.sort(key=lambda x: x.get("price"))
+            best_opt = valid_opts[0]
+            
+            fob = best_opt.get("price")
+            supplier = self.clean_supplier_name(best_opt.get("supplier"))
+            packing = best_opt.get("packing") or "N/A"
+            
+            pcs_per_ctn, unit_cbm = self.parse_packing_metrics(packing)
+            import math
+            ctns = math.ceil(qty / pcs_per_ctn)
+            cbm = ctns * unit_cbm
+            
+            item_cost = qty * fob
+            total_split_fob += item_cost
+            total_split_cbm += cbm
+            suppliers_used.add(supplier)
+            
+            split_items.append({
+                "product": p_name.title(),
+                "supplier": supplier,
+                "qty": qty,
+                "fob": fob,
+                "cost": item_cost,
+                "cbm": cbm
+            })
+
+        if not split_items:
+            ctk.CTkLabel(self.opt_results_scroll, text="❌ No valid quotes available for selected items.", text_color="#ffa6a6").pack(pady=20)
+            return
+
+        split_freight = total_split_cbm * freight_rate
+        split_duty = total_split_fob * (duty_percent / 100.0)
+        split_local = len(suppliers_used) * 350.0
+        total_split_cost = total_split_fob + split_freight + split_duty + split_local
+
+        all_suppliers = set(self.clean_supplier_name(r.get("supplier")) for r in self.extracted_data if r.get("supplier"))
+        
+        consolidation_results = []
+        for s in all_suppliers:
+            s_items = []
+            s_fob_total = 0.0
+            s_cbm_total = 0.0
+            can_quote_all = True
+            
+            for p_name, qty in selected_items.items():
+                options = quotes_by_product.get(p_name, [])
+                s_options = [o for o in options if self.clean_supplier_name(o.get("supplier")) == s and o.get("price") is not None and o.get("price") != "N/A"]
+                if not s_options:
+                    can_quote_all = False
+                    break
+                s_options.sort(key=lambda x: x.get("price"))
+                opt = s_options[0]
+                
+                fob = opt.get("price")
+                packing = opt.get("packing") or "N/A"
+                pcs_per_ctn, unit_cbm = self.parse_packing_metrics(packing)
+                import math
+                ctns = math.ceil(qty / pcs_per_ctn)
+                cbm = ctns * unit_cbm
+                
+                item_cost = qty * fob
+                s_fob_total += item_cost
+                s_cbm_total += cbm
+                
+                s_items.append({
+                    "product": p_name.title(),
+                    "qty": qty,
+                    "fob": fob,
+                    "cost": item_cost,
+                    "cbm": cbm
+                })
+                
+            if can_quote_all:
+                s_freight = s_cbm_total * freight_rate
+                s_duty = s_fob_total * (duty_percent / 100.0)
+                s_local = 350.0
+                s_total = s_fob_total + s_freight + s_duty + s_local
+                
+                consolidation_results.append({
+                    "supplier": s,
+                    "items": s_items,
+                    "fob_total": s_fob_total,
+                    "cbm_total": s_cbm_total,
+                    "freight": s_freight,
+                    "duty": s_duty,
+                    "local": s_local,
+                    "total_cost": s_total
+                })
+
+        rec_fr = ctk.CTkFrame(self.opt_results_scroll, fg_color="#1f538d", height=70)
+        rec_fr.pack(fill="x", pady=(0, 15), padx=5)
+        
+        best_consolidated = None
+        if consolidation_results:
+            consolidation_results.sort(key=lambda x: x["total_cost"])
+            best_consolidated = consolidation_results[0]
+
+        if best_consolidated and best_consolidated["total_cost"] < total_split_cost:
+            savings = total_split_cost - best_consolidated["total_cost"]
+            rec_text = f"💡 RECOMMENDATION: Consolidate with {best_consolidated['supplier']}!\nConsolidating saves you ${savings:,.2f} in split freight & handling fees."
+            rec_color = "#a6ffa6"
+        else:
+            if best_consolidated:
+                savings = best_consolidated["total_cost"] - total_split_cost
+                rec_text = f"💡 RECOMMENDATION: Split purchases across suppliers!\nSplitting is ${savings:,.2f} cheaper than consolidating with {best_consolidated['supplier']}."
+            else:
+                rec_text = f"💡 RECOMMENDATION: Split purchases across suppliers!\nNo single supplier can fulfill all selected products."
+            rec_color = "#ffefa6"
+            
+        ctk.CTkLabel(rec_fr, text=rec_text, font=ctk.CTkFont(size=13, weight="bold"), text_color=rec_color, justify="left").pack(padx=15, pady=12, fill="both")
+
+        split_fr = ctk.CTkFrame(self.opt_results_scroll)
+        split_fr.pack(fill="x", pady=5, padx=5)
+        
+        ctk.CTkLabel(split_fr, text="📊 Strategy A: Split Sourcing (Cheapest FOB per Item)", font=ctk.CTkFont(weight="bold", size=14)).pack(pady=8, padx=15, anchor="w")
+        
+        for item in split_items:
+            row_lbl = f"• Buy {item['qty']:,}x {item['product']} from {item['supplier']} @ ${item['fob']:.4f}/pc — Cost: ${item['cost']:,.2f} ({item['cbm']:.2f} m³)"
+            ctk.CTkLabel(split_fr, text=row_lbl, font=ctk.CTkFont(size=11), text_color="grey").pack(pady=1, padx=25, anchor="w")
+            
+        summary_split = f"Items Cost: ${total_split_fob:,.2f} | Freight: ${split_freight:,.2f} | Duties: ${split_duty:,.2f} | Handling: ${split_local:,.2f}"
+        ctk.CTkLabel(split_fr, text=summary_split, font=ctk.CTkFont(size=11, weight="bold"), text_color="white").pack(pady=(5, 2), padx=15, anchor="w")
+        ctk.CTkLabel(split_fr, text=f"TOTAL DDP SPLIT COST: ${total_split_cost:,.2f}", font=ctk.CTkFont(size=13, weight="bold"), text_color="#ffefa6").pack(pady=(2, 8), padx=15, anchor="w")
+
+        if consolidation_results:
+            con_fr = ctk.CTkFrame(self.opt_results_scroll)
+            con_fr.pack(fill="x", pady=10, padx=5)
+            
+            ctk.CTkLabel(con_fr, text="🏢 Strategy B: Consolidated Sourcing Options", font=ctk.CTkFont(weight="bold", size=14)).pack(pady=8, padx=15, anchor="w")
+            
+            for s_res in consolidation_results:
+                s_name = s_res["supplier"]
+                s_total = s_res["total_cost"]
+                
+                mark = ""
+                if best_consolidated and s_name == best_consolidated["supplier"]:
+                    mark = " ★ Best Consolidated"
+                
+                ctk.CTkLabel(con_fr, text=f"• {s_name}{mark}", font=ctk.CTkFont(weight="bold", size=12)).pack(pady=2, padx=15, anchor="w")
+                
+                for item in s_res["items"]:
+                    row_lbl = f"  - {item['product']}: {item['qty']:,} pcs @ ${item['fob']:.4f}/pc — Cost: ${item['cost']:,.2f}"
+                    ctk.CTkLabel(con_fr, text=row_lbl, font=ctk.CTkFont(size=11), text_color="grey").pack(pady=1, padx=25, anchor="w")
+                    
+                summary_con = f"  Items: ${s_res['fob_total']:,.2f} | Freight: ${s_res['freight']:,.2f} | Duties: ${s_res['duty']:,.2f} | Handling: ${s_res['local']:,.2f}"
+                ctk.CTkLabel(con_fr, text=summary_con, font=ctk.CTkFont(size=11), text_color="grey").pack(pady=1, padx=25, anchor="w")
+                ctk.CTkLabel(con_fr, text=f"  TOTAL CONSOLIDATED COST: ${s_total:,.2f}", font=ctk.CTkFont(size=12, weight="bold"), text_color="#a6ffa6").pack(pady=(2, 6), padx=25, anchor="w")
+        else:
+            ctk.CTkLabel(self.opt_results_scroll, text="⚠️ No single supplier in database quotes all selected products.", text_color="grey").pack(pady=10)
+
+    def setup_rfq_generator_tab(self):
+        tab_rfq = self.tabview.tab("📝 RFQ Generator")
+        tab_rfq.grid_columnconfigure(0, weight=1)
+        tab_rfq.grid_columnconfigure(1, weight=1)
+        tab_rfq.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_rfq, text="AI Request For Quotation (RFQ) Generator", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: RFQ Fields ---
+        left_frame = ctk.CTkFrame(tab_rfq)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="📝 RFQ Sourcing Requirements", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+
+        # Product Dropdown & Select
+        ctk.CTkLabel(left_frame, text="Select Product category:").grid(row=1, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_product_cb = ctk.CTkComboBox(left_frame, values=["Custom"], command=self.on_rfq_product_changed)
+        self.rfq_product_cb.grid(row=1, column=1, padx=15, pady=2, sticky="ew")
+
+        # Custom Product Input
+        ctk.CTkLabel(left_frame, text="Or Custom Product Name:").grid(row=2, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_name_entry = ctk.CTkEntry(left_frame)
+        self.rfq_name_entry.grid(row=2, column=1, padx=15, pady=2, sticky="ew")
+
+        # Target Qty
+        ctk.CTkLabel(left_frame, text="Target Quantity (pcs):").grid(row=3, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_qty_entry = ctk.CTkEntry(left_frame)
+        self.rfq_qty_entry.grid(row=3, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_qty_entry.insert(0, "100000")
+
+        # Target Price Term
+        ctk.CTkLabel(left_frame, text="Price Terms (FOB/EXW):").grid(row=4, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_term_cb = ctk.CTkComboBox(left_frame, values=["FOB Wuhan", "FOB Shanghai", "FOB Ningbo", "EXW", "CIF", "DDP"])
+        self.rfq_term_cb.grid(row=4, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_term_cb.set("FOB Shanghai")
+
+        # Lead Time
+        ctk.CTkLabel(left_frame, text="Target Lead Time:").grid(row=5, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_lead_entry = ctk.CTkEntry(left_frame)
+        self.rfq_lead_entry.grid(row=5, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_lead_entry.insert(0, "30 days")
+
+        # Payment Term
+        ctk.CTkLabel(left_frame, text="Payment Terms:").grid(row=6, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_payment_entry = ctk.CTkEntry(left_frame)
+        self.rfq_payment_entry.grid(row=6, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_payment_entry.insert(0, "30% Deposit, 70% Balance against B/L")
+
+        # Specs Label
+        ctk.CTkLabel(left_frame, text="Product Specifications:").grid(row=7, column=0, padx=15, pady=5, sticky="w")
+        
+        btn_spec_helper = ctk.CTkButton(left_frame, text="✍ Refine Specs with AI", fg_color="#6e4513", hover_color="#52320b", font=ctk.CTkFont(size=11), command=self.refine_rfq_specs_with_ai)
+        btn_spec_helper.grid(row=7, column=1, padx=15, pady=5, sticky="e")
+
+        # Text specs field
+        self.rfq_specs_text = ctk.CTkTextbox(left_frame, height=130)
+        self.rfq_specs_text.grid(row=8, column=0, columnspan=2, padx=15, pady=(2, 15), sticky="nsew")
+
+        # --- RIGHT PANEL: Actions & Preview ---
+        right_frame = ctk.CTkFrame(tab_rfq)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📋 RFQ PDF Action Controls", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        self.rfq_preview_box = ctk.CTkTextbox(right_frame, height=280, font=("Consolas", 10))
+        self.rfq_preview_box.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
+        self.rfq_preview_box.insert("1.0", "Fill out the fields on the left and click 'Generate PDF RFQ' to compile your sourcing document.")
+        self.rfq_preview_box.configure(state="disabled")
+
+        action_fr = ctk.CTkFrame(right_frame, fg_color="transparent")
+        action_fr.grid(row=2, column=0, padx=15, pady=15, sticky="ew")
+
+        self.btn_gen_rfq_pdf = ctk.CTkButton(action_fr, text="📝 Generate PDF RFQ", fg_color="#1f538d", hover_color="#153e6b", command=self.generate_rfq_pdf)
+        self.btn_gen_rfq_pdf.pack(side="right", padx=5)
+
+    def on_rfq_product_changed(self, choice):
+        if choice == "Custom":
+            self.rfq_name_entry.delete(0, tk.END)
+            self.rfq_specs_text.delete("1.0", tk.END)
+        else:
+            self.rfq_name_entry.delete(0, tk.END)
+            self.rfq_name_entry.insert(0, choice)
+            
+            best_specs = ""
+            for r in self.extracted_data:
+                if (r.get("product") or "").strip().lower() == choice.lower():
+                    spec = r.get("spec") or ""
+                    color = r.get("color") or ""
+                    elastic = r.get("elastic") or ""
+                    
+                    details = []
+                    if spec and spec != "N/A": details.append(f"Specifications: {spec}")
+                    if color and color != "N/A": details.append(f"Color: {color}")
+                    if elastic and elastic != "N/A": details.append(f"Elastic Style: {elastic}")
+                    
+                    if details:
+                        best_specs = "\n".join(details)
+                        break
+            
+            self.rfq_specs_text.delete("1.0", tk.END)
+            if best_specs:
+                self.rfq_specs_text.insert("1.0", best_specs)
+            else:
+                self.rfq_specs_text.insert("1.0", f"High-quality {choice} matching standard industry specifications.")
+
+    def update_rfq_generator_tab(self):
+        products = set()
+        for r in self.extracted_data:
+            prod = (r.get("product") or "").strip().title()
+            if prod:
+                products.add(prod)
+        sorted_prods = ["Custom"] + sorted(list(products))
+        
+        current = self.rfq_product_cb.get()
+        self.rfq_product_cb.configure(values=sorted_prods)
+        if current in sorted_prods:
+            self.rfq_product_cb.set(current)
+        else:
+            self.rfq_product_cb.set("Custom")
+
+    def refine_rfq_specs_with_ai(self):
+        prod_name = self.rfq_name_entry.get().strip()
+        current_specs = self.rfq_specs_text.get("1.0", tk.END).strip()
+        
+        if not prod_name:
+            messagebox.showwarning("Warning", "Please enter a product name first!")
+            return
+            
+        self.rfq_specs_text.delete("1.0", tk.END)
+        self.rfq_specs_text.insert("1.0", "AI is writing premium technical specs...")
+        self.update()
+        
+        def run_ai_specs():
+            prompt = f"""
+            You are an expert global sourcing manager. Write a detailed, professional technical specification list for a Request for Quotation (RFQ).
+            Product: {prod_name}
+            Current specifications input: {current_specs}
+            
+            Please list out:
+            1. Raw Materials & Grade standards (e.g. non-woven, PE film, weight in gsm if applicable).
+            2. Structural details & Dimensions (dimensions, elastic types, seam style).
+            3. Quality control standards (FDA/CE conformity if standard).
+            4. Packing instructions (bag/carton counts).
+            
+            Keep the specifications clear, professional, and formatted in bullet points.
+            Output ONLY the specification bullet points. Do not write introductory words.
+            """
+            try:
+                refined = self.generate_with_fallback([], prompt, json_response=False)
+                self.after(0, lambda text=refined: update_textbox(text))
+            except Exception as e:
+                self.after(0, lambda err=e: update_textbox(f"Error refining specs: {err}"))
+                
+        def update_textbox(text):
+            self.rfq_specs_text.delete("1.0", tk.END)
+            self.rfq_specs_text.insert("1.0", text)
+            
+        threading.Thread(target=run_ai_specs, daemon=True).start()
+
+    def generate_rfq_pdf(self):
+        prod_name = self.rfq_name_entry.get().strip()
+        qty = self.rfq_qty_entry.get().strip()
+        terms = self.rfq_term_cb.get().strip()
+        lead_time = self.rfq_lead_entry.get().strip()
+        payments = self.rfq_payment_entry.get().strip()
+        specs = self.rfq_specs_text.get("1.0", tk.END).strip()
+        
+        if not prod_name:
+            messagebox.showwarning("Warning", "Please specify a product name before generating the RFQ PDF!")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF Documents", "*.pdf")],
+            initialfile=f"RFQ_Request_{prod_name.replace(' ', '_')}.pdf",
+            title="Save RFQ PDF Document"
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib import colors
+            import datetime
+            
+            doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            story = []
+            
+            styles = getSampleStyleSheet()
+            
+            primary_color = colors.HexColor("#1f538d")
+            
+            title_style = ParagraphStyle(
+                'RFQTitle',
+                parent=styles['Heading1'],
+                fontSize=22,
+                textColor=primary_color,
+                spaceAfter=15
+            )
+            
+            body_style = ParagraphStyle(
+                'RFQBody',
+                parent=styles['Normal'],
+                fontSize=10,
+                leading=14,
+                textColor=colors.HexColor("#333333")
+            )
+            
+            sub_title_style = ParagraphStyle(
+                'RFQSubTitle',
+                parent=styles['Heading2'],
+                fontSize=14,
+                textColor=primary_color,
+                spaceBefore=12,
+                spaceAfter=8
+            )
+            
+            story.append(Paragraph("REQUEST FOR QUOTATION (RFQ)", title_style))
+            story.append(Paragraph(f"<b>Document Ref:</b> RFQ-{datetime.date.today().strftime('%Y%m%d')}-{prod_name[:4].upper()}", body_style))
+            story.append(Paragraph(f"<b>Date Generated:</b> {datetime.date.today().strftime('%B %d, %Y')}", body_style))
+            story.append(Spacer(1, 15))
+            
+            terms_data = [
+                [Paragraph("<b>Sourcing Category</b>", body_style), Paragraph(prod_name, body_style)],
+                [Paragraph("<b>Target Order Volume</b>", body_style), Paragraph(f"{qty} pieces", body_style)],
+                [Paragraph("<b>Required Price Terms</b>", body_style), Paragraph(terms, body_style)],
+                [Paragraph("<b>Target Delivery Time</b>", body_style), Paragraph(lead_time, body_style)],
+                [Paragraph("<b>Required Payment Terms</b>", body_style), Paragraph(payments, body_style)]
+            ]
+            
+            terms_table = Table(terms_data, colWidths=[180, 350])
+            terms_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (0,-1), colors.HexColor("#f2f5f9")),
+                ('TEXTCOLOR', (0,0), (-1,-1), colors.HexColor("#333333")),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ('TOPPADDING', (0,0), (-1,-1), 6),
+                ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor("#dcdcdc")),
+                ('BOX', (0,0), (-1,-1), 1, primary_color),
+            ]))
+            story.append(terms_table)
+            story.append(Spacer(1, 20))
+            
+            story.append(Paragraph("Technical Product Specifications", sub_title_style))
+            specs_formatted = specs.replace("\n", "<br/>")
+            story.append(Paragraph(specs_formatted, body_style))
+            story.append(Spacer(1, 20))
+            
+            story.append(Paragraph("Submission Instructions", sub_title_style))
+            instructions = (
+                "Please submit your formal quotation matching or improving upon the above terms. "
+                "Quote submissions must include: unit price, carton packing configurations, carton dimensions (MEAS/CBM), "
+                "production lead times, and country of origin certificates."
+            )
+            story.append(Paragraph(instructions, body_style))
+            
+            doc.build(story)
+            
+            self.rfq_preview_box.configure(state="normal")
+            self.rfq_preview_box.delete("1.0", tk.END)
+            self.rfq_preview_box.insert("1.0", f"✅ RFQ PDF generated successfully!\nSaved to: {file_path}\n\n=== Sourcing Target Summary ===\nProduct: {prod_name}\nQuantity: {qty}\nPrice Terms: {terms}\nLead Time: {lead_time}\nPayment Terms: {payments}\n\n=== Specifications Draft ===\n{specs}")
+            self.rfq_preview_box.configure(state="disabled")
+            
+            messagebox.showinfo("Success", f"RFQ PDF saved successfully at:\n{file_path}!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate RFQ PDF: {e}")
 
 if __name__ == "__main__":
     app = App()
