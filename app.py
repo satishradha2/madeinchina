@@ -367,6 +367,7 @@ class App(ctk.CTk):
         self.tabview.add("📝 RFQ Generator")
         self.tabview.add("💰 Profit Simulator")
         self.tabview.add("🏢 Factory Audit & QC")
+        self.tabview.add("🧮 Sourcing Matrix")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -517,6 +518,9 @@ class App(ctk.CTk):
 
         # Setup Factory Audit & QC tab
         self.setup_factory_qc_tab()
+
+        # Setup Sourcing Matrix tab
+        self.setup_sourcing_matrix_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -1040,6 +1044,8 @@ class App(ctk.CTk):
             self.update_profit_simulator_tab()
         if hasattr(self, 'qc_supplier_cb'):
             self.update_factory_qc_tab()
+        if hasattr(self, 'matrix_frame'):
+            self.update_sourcing_matrix_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -5157,8 +5163,120 @@ class App(ctk.CTk):
                         self.after(0, lambda: self.currency_status_lbl.configure(text=f"Live Rates: 1 USD = {cny_rate:.2f} CNY | {eur_rate:.2f} EUR", text_color="green"))
         except Exception as e:
             print(f"Failed to fetch live exchange rates: {e}")
+        except Exception as e:
+            print(f"Failed to fetch live exchange rates: {e}")
             if hasattr(self, 'currency_status_lbl'):
                 self.after(0, lambda: self.currency_status_lbl.configure(text="Offline Rates: 1 USD = 7.25 CNY | 0.92 EUR", text_color="grey"))
+
+    def setup_sourcing_matrix_tab(self):
+        self.matrix_tab = self.tabview.tab("🧮 Sourcing Matrix")
+        self.matrix_tab.grid_columnconfigure(0, weight=1)
+        self.matrix_tab.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(self.matrix_tab, text="Supplier vs Product Side-by-Side Sourcing Matrix", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, padx=20, pady=(15, 10), sticky="w")
+
+        # Scrollable Frame to hold Treeview
+        self.matrix_frame = ctk.CTkFrame(self.matrix_tab)
+        self.matrix_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        self.matrix_frame.grid_columnconfigure(0, weight=1)
+        self.matrix_frame.grid_rowconfigure(0, weight=1)
+
+        self.matrix_tree = None
+
+    def update_sourcing_matrix_tab(self):
+        for w in self.matrix_frame.winfo_children():
+            w.destroy()
+
+        if not self.extracted_data:
+            ctk.CTkLabel(self.matrix_frame, text="No sourcing data loaded in database.", text_color="grey").pack(pady=40)
+            return
+
+        suppliers = set()
+        products = set()
+        for r in self.extracted_data:
+            s = self.clean_supplier_name(r.get("supplier"))
+            p = (r.get("product") or "").strip().title()
+            if s and s != "Unknown":
+                suppliers.add(s)
+            if p:
+                products.add(p)
+
+        sorted_suppliers = sorted(list(suppliers))
+        sorted_products = sorted(list(products))
+
+        if not sorted_suppliers or not sorted_products:
+            ctk.CTkLabel(self.matrix_frame, text="No suppliers or products found to build comparison matrix.", text_color="grey").pack(pady=40)
+            return
+
+        cols = ("product",) + tuple(sorted_suppliers)
+        
+        scroll_y = ttk.Scrollbar(self.matrix_frame, orient="vertical")
+        scroll_x = ttk.Scrollbar(self.matrix_frame, orient="horizontal")
+        
+        self.matrix_tree = ttk.Treeview(
+            self.matrix_frame,
+            columns=cols,
+            show="headings",
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set,
+            style="Treeview"
+        )
+        
+        scroll_y.config(command=self.matrix_tree.yview)
+        scroll_x.config(command=self.matrix_tree.xview)
+        
+        scroll_y.pack(side="right", fill="y")
+        scroll_x.pack(side="bottom", fill="x")
+        self.matrix_tree.pack(side="left", fill="both", expand=True)
+
+        self.matrix_tree.heading("product", text="Product Category")
+        self.matrix_tree.column("product", width=160, anchor="w")
+        for s in sorted_suppliers:
+            self.matrix_tree.heading(s, text=s)
+            self.matrix_tree.column(s, width=130, anchor="center")
+
+        currency_choice = self.currency_cb.get()
+        factor = 1.0
+        symbol = "$"
+        if "CNY" in currency_choice:
+            factor = self.exchange_rates["CNY"]
+            symbol = "¥"
+        elif "EUR" in currency_choice:
+            factor = self.exchange_rates["EUR"]
+            symbol = "€"
+
+        for p in sorted_products:
+            row_vals = [p]
+            
+            prices = {}
+            for s in sorted_suppliers:
+                for r in self.extracted_data:
+                    r_sup = self.clean_supplier_name(r.get("supplier"))
+                    r_prod = (r.get("product") or "").strip().lower()
+                    if r_sup == s and r_prod == p.lower():
+                        price = r.get("price")
+                        try:
+                            prices[s] = float(price)
+                        except (ValueError, TypeError):
+                            pass
+            
+            best_sup = None
+            if prices:
+                best_sup = min(prices, key=prices.get)
+
+            for s in sorted_suppliers:
+                if s in prices:
+                    price_val = prices[s] * factor
+                    formatted = f"{symbol}{price_val:.5f}" if price_val < 0.1 else f"{symbol}{price_val:.2f}"
+                    if s == best_sup and len(prices) > 1:
+                        formatted += " (Best)"
+                    row_vals.append(formatted)
+                else:
+                    row_vals.append("N/A")
+
+            self.matrix_tree.insert("", tk.END, values=row_vals)
 
 if __name__ == "__main__":
     app = App()
