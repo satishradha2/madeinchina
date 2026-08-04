@@ -144,6 +144,19 @@ def init_db():
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Table for tracking supplier compliance & factory audits
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS supplier_compliance (
+            supplier TEXT PRIMARY KEY,
+            has_ce INTEGER,
+            has_fda INTEGER,
+            has_iso INTEGER,
+            has_bsci INTEGER,
+            has_sgs INTEGER,
+            audit_score REAL,
+            defect_rate REAL
+        )
+    """)
     conn.commit()
     
     # Auto-populate contacts from existing quotes
@@ -346,6 +359,7 @@ class App(ctk.CTk):
         self.tabview.add("🎯 Purchase Optimizer")
         self.tabview.add("📝 RFQ Generator")
         self.tabview.add("💰 Profit Simulator")
+        self.tabview.add("🏢 Factory Audit & QC")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -490,6 +504,9 @@ class App(ctk.CTk):
 
         # Setup Profit Simulator tab
         self.setup_profit_simulator_tab()
+
+        # Setup Factory Audit & QC tab
+        self.setup_factory_qc_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -1011,6 +1028,8 @@ class App(ctk.CTk):
             self.update_rfq_generator_tab()
         if hasattr(self, 'profit_tree'):
             self.update_profit_simulator_tab()
+        if hasattr(self, 'qc_supplier_cb'):
+            self.update_factory_qc_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -2462,6 +2481,78 @@ class App(ctk.CTk):
                     
                 t.setStyle(t_style)
                 story.append(t)
+                story.append(Spacer(1, 20))
+                
+                # 3. Add Sourcing Dossier Analytics (Landed Cost & Profit Simulator overview)
+                story.append(Paragraph("Sourcing Dossier & Business Profitability Projections", section_heading))
+                story.append(Paragraph("Below is a simulated projection of DDP landed costs and net operating profitability margins for your active quotes (assuming a target retail price of $1.50 per unit, $120/CBM LCL rate, and 6.5% duties):", body_style))
+                story.append(Spacer(1, 10))
+
+                # Build Dossier table
+                dossier_headers = [
+                    Paragraph("Supplier", header_style),
+                    Paragraph("Product", header_style),
+                    Paragraph("FOB ($)", header_style),
+                    Paragraph("Landed ($)", header_style),
+                    Paragraph("Net Profit ($)", header_style),
+                    Paragraph("ROI (%)", header_style)
+                ]
+                dossier_data = [dossier_headers]
+
+                import math
+                for r_d in filtered_data:
+                    try:
+                        fob = float(r_d.get("price"))
+                    except:
+                        continue
+                    s_name = self.clean_supplier_name(r_d.get("supplier"))
+                    p_name = r_d.get("product") or "Product"
+                    packing = r_d.get("packing_details") or "100/ctn, 0.1cbm"
+                    
+                    # Basic parser for pack metrics (Simplified)
+                    parts = packing.lower().replace(",", " ").split()
+                    pcs_per_ctn = 100
+                    unit_cbm = 0.001
+                    for p in parts:
+                        if "ctn" in p: pcs_per_ctn = float(p.replace("ctn", "").strip("/")) or 100
+                        if "cbm" in p: unit_cbm = float(p.replace("cbm", "").strip("/")) or 0.001
+                    
+                    total_ctns = math.ceil(100000 / pcs_per_ctn)
+                    total_cbm = total_ctns * unit_cbm
+                    total_fob = 100000 * fob
+                    total_freight = total_cbm * 120.0
+                    total_duty = total_fob * 0.065
+                    total_local = 350.0
+                    total_landed = total_fob + total_freight + total_duty + total_local
+                    landed_pc = total_landed / 100000
+                    
+                    opex_total_pc = 0.50
+                    unit_total_cost = landed_pc + opex_total_pc
+                    net_profit = 1.50 - unit_total_cost
+                    roi = (net_profit / landed_pc) * 100.0 if landed_pc > 0 else 0.0
+                    
+                    dossier_data.append([
+                        Paragraph(s_name, cell_style),
+                        Paragraph(p_name, cell_style),
+                        Paragraph(f"${fob:.2f}", cell_style),
+                        Paragraph(f"${landed_pc:.4f}", cell_style),
+                        Paragraph(f"${net_profit:.4f}", cell_style),
+                        Paragraph(f"{roi:.1f}%", cell_style)
+                    ])
+
+                dossier_table = Table(dossier_data, colWidths=[120, 110, 75, 75, 80, 80])
+                dossier_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2b3e50')),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#dddddd')),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                    ('TOPPADDING', (0,0), (-1,-1), 4),
+                ]))
+                for r_idx in range(1, len(dossier_data)):
+                    bg = colors.HexColor('#ffffff') if r_idx % 2 == 1 else colors.HexColor('#f2f5f9')
+                    dossier_table.setStyle(TableStyle([('BACKGROUND', (0, r_idx), (-1, r_idx), bg)]))
+                
+                story.append(dossier_table)
                 story.append(Spacer(1, 15))
                 
                 # Footer note
@@ -4803,6 +4894,239 @@ class App(ctk.CTk):
                 ),
                 tags=(tag,)
             )
+
+    def setup_factory_qc_tab(self):
+        tab_qc = self.tabview.tab("🏢 Factory Audit & QC")
+        tab_qc.grid_columnconfigure(0, weight=1)
+        tab_qc.grid_columnconfigure(1, weight=1)
+        tab_qc.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_qc, text="Factory Compliance Standards & QC Inspection", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Compliance Entry ---
+        left_frame = ctk.CTkFrame(tab_qc)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="🏢 Compliance & Audit Log", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+
+        ctk.CTkLabel(left_frame, text="Select Supplier:").grid(row=1, column=0, padx=15, pady=5, sticky="w")
+        self.qc_supplier_cb = ctk.CTkComboBox(left_frame, values=[], command=self.load_compliance_record)
+        self.qc_supplier_cb.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
+
+        # Certification Checkboxes
+        ctk.CTkLabel(left_frame, text="Compliance Standards:").grid(row=2, column=0, padx=15, pady=5, sticky="w")
+        
+        cb_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        cb_frame.grid(row=2, column=1, padx=15, pady=5, sticky="w")
+        
+        self.qc_ce_var = tk.IntVar()
+        self.qc_fda_var = tk.IntVar()
+        self.qc_iso_var = tk.IntVar()
+        self.qc_bsci_var = tk.IntVar()
+        self.qc_sgs_var = tk.IntVar()
+        
+        ctk.CTkCheckBox(cb_frame, text="CE Certificate", variable=self.qc_ce_var, font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
+        ctk.CTkCheckBox(cb_frame, text="FDA Registration", variable=self.qc_fda_var, font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
+        ctk.CTkCheckBox(cb_frame, text="ISO 9001 (Quality)", variable=self.qc_iso_var, font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
+        ctk.CTkCheckBox(cb_frame, text="BSCI (Social)", variable=self.qc_bsci_var, font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
+        ctk.CTkCheckBox(cb_frame, text="SGS Third Party", variable=self.qc_sgs_var, font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
+
+        # Audit Score
+        ctk.CTkLabel(left_frame, text="Audit Score (0-100):").grid(row=3, column=0, padx=15, pady=5, sticky="w")
+        self.qc_audit_entry = ctk.CTkEntry(left_frame)
+        self.qc_audit_entry.grid(row=3, column=1, padx=15, pady=5, sticky="ew")
+        self.qc_audit_entry.insert(0, "85")
+
+        # Defect Rate
+        ctk.CTkLabel(left_frame, text="Est Defect Rate (%):").grid(row=4, column=0, padx=15, pady=5, sticky="w")
+        self.qc_defect_entry = ctk.CTkEntry(left_frame)
+        self.qc_defect_entry.grid(row=4, column=1, padx=15, pady=5, sticky="ew")
+        self.qc_defect_entry.insert(0, "1.2")
+
+        self.btn_save_qc = ctk.CTkButton(left_frame, text="💾 Save Compliance Record", fg_color="#1f538d", hover_color="#153e6b", command=self.save_compliance_record)
+        self.btn_save_qc.grid(row=5, column=0, columnspan=2, padx=15, pady=20, sticky="ew")
+
+        # --- RIGHT PANEL: QC Checks & PDF ---
+        right_frame = ctk.CTkFrame(tab_qc)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📋 QC Inspection Checklists", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        info_box = ctk.CTkTextbox(right_frame, height=220, font=("Consolas", 10))
+        info_box.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
+        info_box.insert("1.0", "Factory Quality Control checks standard procedures:\n\n1. Carton Drop Test (1.2m drop test)\n2. Barcode & Carton Labeling matches shipment details\n3. Functional Stress Check (Tensile elasticity checks)\n4. Visual Checks (Dirt, stains, seam completeness)\n5. Dimension and weight conformities")
+        info_box.configure(state="disabled")
+
+        self.btn_export_qc_pdf = ctk.CTkButton(right_frame, text="📋 Export QC Checklist PDF", fg_color="#6e4513", hover_color="#52320b", command=self.generate_qc_checklist_pdf)
+        self.btn_export_qc_pdf.grid(row=2, column=0, padx=15, pady=20, sticky="ew")
+
+    def update_factory_qc_tab(self):
+        suppliers = set()
+        for r in self.extracted_data:
+            s = self.clean_supplier_name(r.get("supplier"))
+            if s and s != "Unknown":
+                suppliers.add(s)
+        sorted_sups = sorted(list(suppliers))
+        self.qc_supplier_cb.configure(values=sorted_sups)
+        if sorted_sups:
+            self.qc_supplier_cb.set(sorted_sups[0])
+            self.load_compliance_record(sorted_sups[0])
+
+    def save_compliance_record(self):
+        supplier = self.qc_supplier_cb.get()
+        if not supplier or supplier == "Select Supplier":
+            messagebox.showwarning("Warning", "Please select a supplier first!")
+            return
+            
+        try:
+            score = float(self.qc_audit_entry.get().strip())
+            defect = float(self.qc_defect_entry.get().strip())
+        except Exception:
+            messagebox.showerror("Error", "Audit score and defect rate must be valid numbers!")
+            return
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO supplier_compliance (supplier, has_ce, has_fda, has_iso, has_bsci, has_sgs, audit_score, defect_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            supplier,
+            self.qc_ce_var.get(),
+            self.qc_fda_var.get(),
+            self.qc_iso_var.get(),
+            self.qc_bsci_var.get(),
+            self.qc_sgs_var.get(),
+            score,
+            defect
+        ))
+        conn.commit()
+        conn.close()
+        messagebox.showinfo("Success", f"Compliance record saved for {supplier} successfully!")
+
+    def load_compliance_record(self, supplier):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT has_ce, has_fda, has_iso, has_bsci, has_sgs, audit_score, defect_rate FROM supplier_compliance WHERE supplier = ?", (supplier,))
+        row = c.fetchone()
+        conn.close()
+
+        if row:
+            self.qc_ce_var.set(row[0])
+            self.qc_fda_var.set(row[1])
+            self.qc_iso_var.set(row[2])
+            self.qc_bsci_var.set(row[3])
+            self.qc_sgs_var.set(row[4])
+            
+            self.qc_audit_entry.delete(0, tk.END)
+            self.qc_audit_entry.insert(0, str(row[5]))
+            
+            self.qc_defect_entry.delete(0, tk.END)
+            self.qc_defect_entry.insert(0, str(row[6]))
+        else:
+            self.qc_ce_var.set(0)
+            self.qc_fda_var.set(0)
+            self.qc_iso_var.set(0)
+            self.qc_bsci_var.set(0)
+            self.qc_sgs_var.set(0)
+            
+            self.qc_audit_entry.delete(0, tk.END)
+            self.qc_audit_entry.insert(0, "85")
+            
+            self.qc_defect_entry.delete(0, tk.END)
+            self.qc_defect_entry.insert(0, "1.2")
+
+    def generate_qc_checklist_pdf(self):
+        supplier = self.qc_supplier_cb.get()
+        if not supplier or supplier == "Select Supplier":
+            messagebox.showwarning("Warning", "Please select a supplier first!")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF Documents", "*.pdf")],
+            initialfile=f"QC_Inspection_Checklist_{supplier.replace(' ', '_')}.pdf",
+            title="Save QC Checklist PDF"
+        )
+        if not file_path:
+            return
+            
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib import colors
+            import datetime
+            
+            doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            story = []
+            styles = getSampleStyleSheet()
+            
+            primary_color = colors.HexColor("#1f538d")
+            
+            title_style = ParagraphStyle(
+                'QCTitle', parent=styles['Heading1'], fontSize=20, textColor=primary_color, spaceAfter=15
+            )
+            body_style = ParagraphStyle(
+                'QCBody', parent=styles['Normal'], fontSize=9, leading=13, textColor=colors.HexColor("#333333")
+            )
+            sub_title_style = ParagraphStyle(
+                'QCSubTitle', parent=styles['Heading2'], fontSize=12, textColor=primary_color, spaceBefore=10, spaceAfter=6
+            )
+            
+            story.append(Paragraph("PRE-SHIPMENT QUALITY CONTROL CHECKLIST", title_style))
+            story.append(Paragraph(f"<b>Supplier Factory:</b> {supplier}", body_style))
+            story.append(Paragraph(f"<b>Inspection Date:</b> {datetime.date.today().strftime('%B %d, %Y')}", body_style))
+            story.append(Spacer(1, 10))
+            
+            story.append(Paragraph("Inspection Standards & AQL Thresholds", sub_title_style))
+            aql_text = (
+                "<b>Inspection Level:</b> General Inspection Level II<br/>"
+                "<b>Acceptable Quality Limit (AQL):</b> Critical defects: 0% | Major defects: 2.5% | Minor defects: 4.0%"
+            )
+            story.append(Paragraph(aql_text, body_style))
+            story.append(Spacer(1, 15))
+            
+            qc_items = [
+                ["[  ]", "Carton Drop Test", "Perform drop test from 1.2m height on 1 corner, 3 edges, and 6 faces. Assess for damage."],
+                ["[  ]", "Carton Labeling Check", "Verify shipper labels, barcode format, lot numbers, SKU details, and gross weight matches packing list."],
+                ["[  ]", "Visual Defects Inspection", "Inspect unit samples for dirt, stains, tears, discoloration, or manufacturing defects."],
+                ["[  ]", "Dimension Measurement Check", "Measure width, length, elastic band stretch capacity, and weight against product specification sheets."],
+                ["[  ]", "Functional Testing Check", "Verify performance under tension. Perform tear tests on non-woven fabrics and check seal strength."]
+            ]
+            
+            table_data = [[
+                Paragraph("<b>Status</b>", ParagraphStyle('H1', parent=body_style, textColor=colors.white)),
+                Paragraph("<b>Inspection Point</b>", ParagraphStyle('H2', parent=body_style, textColor=colors.white)),
+                Paragraph("<b>Inspection Task & Standard Procedure</b>", ParagraphStyle('H3', parent=body_style, textColor=colors.white))
+            ]]
+            
+            for item in qc_items:
+                table_data.append([
+                    Paragraph(item[0], body_style),
+                    Paragraph(f"<b>{item[1]}</b>", body_style),
+                    Paragraph(item[2], body_style)
+                ])
+                
+            qc_table = Table(table_data, colWidths=[50, 150, 340])
+            qc_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), primary_color),
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#dcdcdc")),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ('TOPPADDING', (0,0), (-1,-1), 6),
+            ]))
+            story.append(qc_table)
+            
+            doc.build(story)
+            messagebox.showinfo("Success", f"QC Checklist PDF generated successfully at:\n{file_path}!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not generate QC PDF: {e}")
 
 if __name__ == "__main__":
     app = App()
