@@ -4567,6 +4567,9 @@ class App(ctk.CTk):
         self.btn_gen_rfq_pdf = ctk.CTkButton(action_fr, text="📝 Generate PDF RFQ", fg_color="#1f538d", hover_color="#153e6b", command=self.generate_rfq_pdf)
         self.btn_gen_rfq_pdf.pack(side="right", padx=5)
 
+        self.btn_broadcast_rfq = ctk.CTkButton(action_fr, text="📡 Broadcast RFQ", fg_color="#6e4513", hover_color="#52320b", command=self.open_rfq_broadcast_popup)
+        self.btn_broadcast_rfq.pack(side="left", padx=5)
+
     def on_rfq_product_changed(self, choice):
         if choice == "Custom":
             self.rfq_name_entry.delete(0, tk.END)
@@ -5379,6 +5382,148 @@ class App(ctk.CTk):
                     row_vals.append("N/A")
 
             self.matrix_tree.insert("", tk.END, values=row_vals)
+
+    def open_rfq_broadcast_popup(self):
+        suppliers = set()
+        for r in self.extracted_data:
+            s = self.clean_supplier_name(r.get("supplier"))
+            if s and s != "Unknown":
+                suppliers.add(s)
+        sorted_sups = sorted(list(suppliers))
+
+        if not sorted_sups:
+            messagebox.showwarning("Warning", "No suppliers found in the database to broadcast to.")
+            return
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("Multi-Supplier RFQ Broadcaster")
+        popup.geometry("500x450")
+        popup.resizable(False, False)
+        popup.attributes("-topmost", True)
+
+        ctk.CTkLabel(popup, text="Select Suppliers for RFQ Outreach", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+
+        checklist_scroll = ctk.CTkScrollableFrame(popup, height=250)
+        checklist_scroll.pack(fill="both", expand=True, padx=20, pady=10)
+
+        checkbox_vars = {}
+        for s in sorted_sups:
+            var = tk.IntVar(value=1)
+            checkbox_vars[s] = var
+            
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT contact_info FROM supplier_contacts WHERE supplier = ?", (s,))
+            row = c.fetchone()
+            conn.close()
+            email_info = ""
+            if row:
+                import re
+                email_match = re.search(r'[\w\.-]+@[\w\.-]+', row[0])
+                if email_match:
+                    email_info = f" ({email_match.group(0)})"
+            
+            ctk.CTkCheckBox(checklist_scroll, text=f"{s}{email_info}", variable=var).pack(anchor="w", pady=4, padx=10)
+
+        def proceed_outreach():
+            selected_sups = [s for s, var in checkbox_vars.items() if var.get() == 1]
+            if not selected_sups:
+                messagebox.showwarning("Warning", "Please select at least one supplier!")
+                return
+            popup.destroy()
+            self.generate_personalized_rfq_outreach(selected_sups)
+
+        btn_proceed = ctk.CTkButton(popup, text="⚡ Generate Personalized Outreach", fg_color="#1f538d", hover_color="#153e6b", command=proceed_outreach)
+        btn_proceed.pack(pady=15, padx=20, fill="x")
+
+    def generate_personalized_rfq_outreach(self, selected_suppliers):
+        outreach_win = ctk.CTkToplevel(self)
+        outreach_win.title("Broadcasting RFQ Outreach Drafts")
+        outreach_win.geometry("700x550")
+        outreach_win.attributes("-topmost", True)
+
+        ctk.CTkLabel(outreach_win, text="AI Personalized RFQ Outreach Emails", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=10)
+
+        tab_control = ctk.CTkTabview(outreach_win)
+        tab_control.pack(fill="both", expand=True, padx=15, pady=10)
+
+        prod_name = self.rfq_name_entry.get().strip() or "Product"
+        target_qty = self.rfq_qty_entry.get().strip() or "100000"
+        price_term = self.rfq_term_cb.get() or "FOB"
+        lead_time = self.rfq_lead_entry.get().strip() or "30 days"
+        payment_term = self.rfq_payment_entry.get().strip() or "30/70"
+        specs = self.rfq_specs_text.get("1.0", "end-1c").strip()
+
+        for s in selected_suppliers:
+            tab_control.add(s)
+            s_tab = tab_control.tab(s)
+            s_tab.grid_columnconfigure(0, weight=1)
+            s_tab.grid_rowconfigure(1, weight=1)
+
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT contact_info FROM supplier_contacts WHERE supplier = ?", (s,))
+            row = c.fetchone()
+            conn.close()
+            
+            sup_email = "sales@supplier.com"
+            if row:
+                import re
+                email_match = re.search(r'[\w\.-]+@[\w\.-]+', row[0])
+                if email_match:
+                    sup_email = email_match.group(0)
+
+            prev_quote_text = ""
+            for r in self.extracted_data:
+                r_sup = self.clean_supplier_name(r.get("supplier"))
+                if r_sup == s:
+                    prev_quote_text = f"In our database, we see this supplier previously quoted {r.get('product')} at ${r.get('price')} FOB."
+                    break
+
+            ai_prompt = f"""
+            You are a professional purchasing agent. Write a personalized RFQ email to the supplier '{s}'.
+            Email Address: {sup_email}
+            We want to request a quotation for:
+            - Product: {prod_name}
+            - Quantity: {target_qty} pcs
+            - Required Price Terms: {price_term}
+            - Lead Time: {lead_time}
+            - Payment Terms: {payment_term}
+            - Technical Specs: {specs}
+            
+            Personalization Context: {prev_quote_text} (If this supplier previously gave a quote, politely reference it and ask if they can improve the pricing/MOQ for this larger RFQ).
+            
+            Keep the email highly professional, clear, and ready to send.
+            Do not use markdown formatting.
+            """
+
+            try:
+                outreach_body = self.generate_with_fallback([], ai_prompt, json_response=False)
+            except Exception:
+                outreach_body = f"Dear {s} Sales Team,\n\nWe would like to request a quotation for {prod_name}. Details are as follows:\n- Quantity: {target_qty}\n- Specs: {specs}\n\nPlease let us know your best pricing and lead time.\n\nBest regards,\nProcurement Team"
+
+            txt = ctk.CTkTextbox(s_tab, height=300)
+            txt.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
+            txt.insert("1.0", outreach_body)
+
+            ctrl_fr = ctk.CTkFrame(s_tab, fg_color="transparent")
+            ctrl_fr.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+
+            def make_launch_cmd(email=sup_email, body_txt_box=txt, s_name=s):
+                return lambda: self.launch_rfq_email_client(email, prod_name, body_txt_box.get("1.0", "end-1c").strip())
+
+            btn_launch = ctk.CTkButton(ctrl_fr, text="✉ Open in Mail Client", fg_color="#1f538d", hover_color="#153e6b", command=make_launch_cmd(sup_email, txt, s))
+            btn_launch.pack(side="right", padx=5)
+
+            btn_copy = ctk.CTkButton(ctrl_fr, text="📋 Copy Draft", command=lambda b=txt: self.copy_to_clipboard(b.get("1.0", "end-1c").strip()))
+            btn_copy.pack(side="right", padx=5)
+
+    def launch_rfq_email_client(self, email, product, body):
+        import urllib.parse
+        import webbrowser
+        subject = f"Request for Quote: {product}"
+        mail_url = f"mailto:{email}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+        webbrowser.open(mail_url)
 
     def setup_visual_search_tab(self):
         tab_search = self.tabview.tab("🔍 AI Visual Search")
