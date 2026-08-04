@@ -748,6 +748,14 @@ class App(ctk.CTk):
         self.load_chat_history_from_db()
         self.load_all_quotes_from_db()
         self.show_page("Sourcing Analysis")
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def on_closing(self):
+        self.is_extracting = False
+        self.chat_is_extracting = False
+        self.destroy()
+        import sys
+        sys.exit(0)
 
     def get_validity_display(self, date_str):
         if not date_str or date_str.lower() in ["n/a", "null", "none", ""]:
