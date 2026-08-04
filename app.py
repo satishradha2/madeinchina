@@ -377,14 +377,37 @@ class App(ctk.CTk):
             self.sidebar_buttons[page_key] = btn
 
         # --- MIDDLE PANEL: Active Page Container ---
+        self.sidebar_visible = True
+        self.sourcing_files_visible = True
+        self.document_preview_visible = True
+
         self.right_frame = ctk.CTkFrame(self, corner_radius=0)
         self.right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         self.right_frame.grid_columnconfigure(0, weight=1)
-        self.right_frame.grid_rowconfigure(0, weight=1)
+        self.right_frame.grid_rowconfigure(0, weight=0) # Control header row
+        self.right_frame.grid_rowconfigure(1, weight=1) # Page content row
+
+        # Control header bar
+        self.top_control_bar = ctk.CTkFrame(self.right_frame, height=35, fg_color="transparent")
+        self.top_control_bar.grid(row=0, column=0, sticky="ew", padx=5, pady=(2, 5))
+
+        self.btn_toggle_nav = ctk.CTkButton(self.top_control_bar, text="☰ Hide Navigation", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=130, height=28, command=self.toggle_navigation_sidebar)
+        self.btn_toggle_nav.pack(side="left", padx=5)
+
+        self.btn_toggle_files = ctk.CTkButton(self.top_control_bar, text="📁 Hide Source Files", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=140, height=28, command=self.toggle_sourcing_files)
+        # Will be packed dynamically inside show_page()
+
+        self.btn_toggle_preview = ctk.CTkButton(self.top_control_bar, text="📄 Hide Preview", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=110, height=28, command=self.toggle_document_preview)
+        # Will be packed dynamically inside show_page()
+
+        self.pages_container = ctk.CTkFrame(self.right_frame, fg_color="transparent")
+        self.pages_container.grid(row=1, column=0, sticky="nsew")
+        self.pages_container.grid_columnconfigure(0, weight=1)
+        self.pages_container.grid_rowconfigure(0, weight=1)
 
         self.pages = {}
         for name in ["Sourcing Analysis", "Scorecard Compliance", "Logistics Costing", "RFQs Outreach", "Customs AI Search", "Settings Directory"]:
-            self.pages[name] = ctk.CTkFrame(self.right_frame, fg_color="transparent")
+            self.pages[name] = ctk.CTkFrame(self.pages_container, fg_color="transparent")
             self.pages[name].grid_columnconfigure(0, weight=1)
             self.pages[name].grid_rowconfigure(0, weight=1)
 
@@ -395,6 +418,7 @@ class App(ctk.CTk):
         self.sourcing_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_comp = self.sourcing_tabview.add("📊 Quotes Comparison")
+        self.tab_comp_ref = tab_comp
         self.matrix_tab = self.sourcing_tabview.add("🧮 Sourcing Matrix")
         tab_charts = self.sourcing_tabview.add("📈 Visual Charts")
         tab_insights = self.sourcing_tabview.add("💡 AI Sourcing Insights")
@@ -1881,11 +1905,24 @@ class App(ctk.CTk):
             else:
                 btn.configure(fg_color="transparent")
                 
-        # Toggle document preview frame visibility based on page
-        if page_name in ["Sourcing Analysis", "Settings Directory"]:
+        # Toggle document preview frame visibility based on page and user visibility preference
+        if page_name in ["Sourcing Analysis", "Settings Directory"] and self.document_preview_visible:
             self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+            self.grid_columnconfigure(2, minsize=360, weight=0)
         else:
             self.preview_frame.grid_forget()
+            self.grid_columnconfigure(2, minsize=0, weight=0)
+
+        # Show/Hide Toggle Buttons dynamically based on page context
+        if page_name == "Sourcing Analysis":
+            self.btn_toggle_files.pack(side="left", padx=5)
+        else:
+            self.btn_toggle_files.pack_forget()
+
+        if page_name in ["Sourcing Analysis", "Settings Directory"]:
+            self.btn_toggle_preview.pack(side="left", padx=5)
+        else:
+            self.btn_toggle_preview.pack_forget()
 
     # --- Folder Logic ---
     def select_folder(self):
@@ -6998,6 +7035,44 @@ Authorized Signature: ___________________________
         if specs:
             self.rfq_specs_text.delete("1.0", tk.END)
             self.rfq_specs_text.insert("1.0", specs.replace("\\n", "\n"))
+
+    def toggle_navigation_sidebar(self):
+        if self.sidebar_visible:
+            self.sidebar_frame.grid_forget()
+            self.grid_columnconfigure(0, minsize=0, weight=0)
+            self.btn_toggle_nav.configure(fg_color="#3c3c3c", text="☰ Show Navigation")
+            self.sidebar_visible = False
+        else:
+            self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+            self.grid_columnconfigure(0, minsize=240, weight=0)
+            self.btn_toggle_nav.configure(fg_color="#1f538d", text="☰ Hide Navigation")
+            self.sidebar_visible = True
+
+    def toggle_sourcing_files(self):
+        if not hasattr(self, 'tab_comp_ref') or not self.tab_comp_ref:
+            return
+        if self.sourcing_files_visible:
+            self.sourcing_files_subframe.grid_forget()
+            self.tab_comp_ref.grid_columnconfigure(0, minsize=0, weight=0)
+            self.btn_toggle_files.configure(fg_color="#3c3c3c", text="📁 Show Source Files")
+            self.sourcing_files_visible = False
+        else:
+            self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(5, 10), pady=10)
+            self.tab_comp_ref.grid_columnconfigure(0, minsize=260, weight=0)
+            self.btn_toggle_files.configure(fg_color="#1f538d", text="📁 Hide Source Files")
+            self.sourcing_files_visible = True
+
+    def toggle_document_preview(self):
+        if self.document_preview_visible:
+            self.preview_frame.grid_forget()
+            self.grid_columnconfigure(2, minsize=0, weight=0)
+            self.btn_toggle_preview.configure(fg_color="#3c3c3c", text="📄 Show Preview")
+            self.document_preview_visible = False
+        else:
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+            self.grid_columnconfigure(2, minsize=360, weight=0)
+            self.btn_toggle_preview.configure(fg_color="#1f538d", text="📄 Hide Preview")
+            self.document_preview_visible = True
 
 if __name__ == "__main__":
     app = App()
