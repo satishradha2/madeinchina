@@ -333,72 +333,95 @@ class App(ctk.CTk):
         self.chat_spinner_idx = 0
 
         # Initialize database tables
-        init_db()
-
-        # Configure grid layout: Left (0), Middle (1, weight 1), Right (2)
-        self.grid_columnconfigure(0, weight=0, minsize=320)
+        init_db()        # Configure grid layout: Left Sidebar (0), Middle Workspace (1, weight 1), Right Preview (2)
+        self.grid_columnconfigure(0, weight=0, minsize=240)
         self.grid_columnconfigure(1, weight=3)
         self.grid_columnconfigure(2, weight=0, minsize=360)
         self.grid_rowconfigure(0, weight=1)
 
-        # --- LEFT PANEL: Control & Files list ---
-        self.left_frame = ctk.CTkFrame(self, width=320, corner_radius=0)
-        self.left_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        self.left_frame.grid_rowconfigure(3, weight=1)
-
-        # Title Label
-        self.title_lbl = ctk.CTkLabel(self.left_frame, text="Supplier Quote Extractor", font=ctk.CTkFont(size=20, weight="bold"))
-        self.title_lbl.pack(pady=15, padx=10)
-
-        # Settings box (API Key)
-        self.settings_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
-        self.settings_frame.pack(pady=5, padx=10, fill="x")
-
-        self.provider_lbl = ctk.CTkLabel(self.settings_frame, text="API Provider:", anchor="w")
-        self.provider_lbl.pack(fill="x")
+        # --- LEFT PANEL: Sidebar Navigation Menu ---
+        self.sidebar_frame = ctk.CTkFrame(self, width=240, corner_radius=0)
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         
-        self.provider_cb = ctk.CTkComboBox(self.settings_frame, values=["Google Gemini", "Custom OpenAI/Luna"], command=self.on_provider_changed)
-        self.provider_cb.pack(fill="x", pady=2)
-        self.provider_cb.set("Google Gemini")
+        self.logo_lbl = ctk.CTkLabel(self.sidebar_frame, text="ProcureAI Enterprise", font=ctk.CTkFont(size=18, weight="bold"), text_color="#1f538d")
+        self.logo_lbl.pack(pady=15, padx=10)
 
-        self.api_lbl = ctk.CTkLabel(self.settings_frame, text="Gemini API Key:", anchor="w")
-        self.api_lbl.pack(fill="x")
+        # Container for navigation list
+        self.nav_container = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        self.nav_container.pack(fill="both", expand=True, padx=5, pady=5)
         
-        self.api_entry = ctk.CTkEntry(self.settings_frame, placeholder_text="AIzaSy...", show="*")
-        self.api_entry.pack(fill="x", pady=2)
-        if self.api_key:
-            self.api_entry.insert(0, self.api_key)
+        # Navigation buttons mapping
+        self.sidebar_buttons = {}
+        nav_items = [
+            ("📊 Quotes Grid", "Sourcing Grid"),
+            ("🧮 Sourcing Matrix", "Sourcing Matrix"),
+            ("🏆 Scorecard Matrix", "Supplier Scorecard"),
+            ("📈 Visual Charts", "Visual Charts"),
+            ("💡 AI Insights", "AI Insights"),
+            ("📅 Gantt Timeline", "Sourcing Timeline"),
+            ("📦 Landed & Packing", "Landed & Packing"),
+            ("💰 Profit Simulator", "Profit Simulator"),
+            ("🏢 Factory Audit & QC", "Factory Audit & QC"),
+            ("📝 RFQ Generator", "RFQ Generator"),
+            ("🔍 AI Visual Search", "AI Visual Search"),
+            ("🇦🇪 UAE Customs", "UAE Customs"),
+            ("📇 Supplier Directory", "Supplier Directory"),
+            ("⚙️ Settings & API", "Settings & API")
+        ]
 
-        # Custom API inputs
-        self.custom_api_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
-        
-        self.base_url_lbl = ctk.CTkLabel(self.custom_api_frame, text="Base URL:", anchor="w")
-        self.base_url_lbl.pack(fill="x")
-        self.base_url_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="https://api.openai.com/v1")
-        self.base_url_entry.pack(fill="x", pady=2)
-        self.base_url_entry.insert(0, "https://api.openai.com/v1")
-        
-        self.model_lbl = ctk.CTkLabel(self.custom_api_frame, text="Model Name:", anchor="w")
-        self.model_lbl.pack(fill="x")
-        self.model_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="gpt-5.6-luna")
-        self.model_entry.pack(fill="x", pady=2)
-        self.model_entry.insert(0, "gpt-5.6-luna")
+        for label, page_key in nav_items:
+            btn = ctk.CTkButton(
+                self.nav_container, 
+                text=label, 
+                anchor="w", 
+                fg_color="transparent", 
+                text_color="white",
+                hover_color="#2c2c2c",
+                command=lambda pk=page_key: self.show_page(pk),
+                height=32
+            )
+            btn.pack(fill="x", pady=2, padx=5)
+            self.sidebar_buttons[page_key] = btn
 
-        self.btn_save_api = ctk.CTkButton(self.settings_frame, text="Save & Test Key", command=self.save_and_test_key, height=26)
-        self.btn_save_api.pack(pady=5, fill="x")
+        # --- MIDDLE PANEL: Active Page Container ---
+        self.right_frame = ctk.CTkFrame(self, corner_radius=0)
+        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        self.right_frame.grid_columnconfigure(0, weight=1)
+        self.right_frame.grid_rowconfigure(0, weight=1)
+
+        self.pages = {}
+        for name in ["Sourcing Grid", "Sourcing Matrix", "Supplier Scorecard", "Visual Charts", "AI Insights", 
+                     "Sourcing Timeline", "Landed & Packing", "Profit Simulator", "Factory Audit & QC", 
+                     "RFQ Generator", "AI Visual Search", "UAE Customs", "Supplier Directory", "Settings & API"]:
+            self.pages[name] = ctk.CTkFrame(self.right_frame, fg_color="transparent")
+            self.pages[name].grid_columnconfigure(0, weight=1)
+            self.pages[name].grid_rowconfigure(0, weight=1)
+
+        # --- PAGE 1: Sourcing Grid (Split Frame layout) ---
+        tab_comp = self.pages["Sourcing Grid"]
+        tab_comp.grid_columnconfigure(0, weight=0, minsize=260)
+        tab_comp.grid_columnconfigure(1, weight=1)
+        tab_comp.grid_rowconfigure(0, weight=1)
+
+        self.sourcing_files_subframe = ctk.CTkFrame(tab_comp, width=260)
+        self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(5, 10), pady=10)
+        
+        self.sourcing_grid_subframe = ctk.CTkFrame(tab_comp, fg_color="transparent")
+        self.sourcing_grid_subframe.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+        self.sourcing_grid_subframe.grid_columnconfigure(0, weight=1)
+        self.sourcing_grid_subframe.grid_rowconfigure(2, weight=1)
 
         # Folder selection / Direct Path Box
-        self.folder_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        self.folder_frame = ctk.CTkFrame(self.sourcing_files_subframe, fg_color="transparent")
         self.folder_frame.pack(pady=15, padx=10, fill="x")
 
-        # Side-by-side buttons
         self.load_btn_frame = ctk.CTkFrame(self.folder_frame, fg_color="transparent")
         self.load_btn_frame.pack(fill="x", pady=(0, 5))
 
-        self.btn_select_folder = ctk.CTkButton(self.load_btn_frame, text="Select Folder", command=self.select_folder, width=140)
+        self.btn_select_folder = ctk.CTkButton(self.load_btn_frame, text="Select Folder", command=self.select_folder, width=115)
         self.btn_select_folder.pack(side="left", fill="x", expand=True, padx=(0, 2))
 
-        self.btn_select_files = ctk.CTkButton(self.load_btn_frame, text="+ Add Files", fg_color="#1f538d", hover_color="#153e6b", command=self.select_files, width=140)
+        self.btn_select_files = ctk.CTkButton(self.load_btn_frame, text="+ Add Files", fg_color="#1f538d", hover_color="#153e6b", command=self.select_files, width=115)
         self.btn_select_files.pack(side="right", fill="x", expand=True, padx=(2, 0))
 
         self.folder_entry = ctk.CTkEntry(self.folder_frame, placeholder_text="Or paste folder path here...")
@@ -407,61 +430,94 @@ class App(ctk.CTk):
         self.folder_entry.bind("<FocusOut>", lambda event: self.on_path_entered())
 
         # Files Queue List Views (Unsynced and Synced separated)
-        self.unsynced_lbl = ctk.CTkLabel(self.left_frame, text="⏳ Unsynced Queue:", anchor="w", font=ctk.CTkFont(weight="bold"))
+        self.unsynced_lbl = ctk.CTkLabel(self.sourcing_files_subframe, text="⏳ Unsynced Queue:", anchor="w", font=ctk.CTkFont(weight="bold"))
         self.unsynced_lbl.pack(fill="x", padx=10, pady=(5, 0))
 
-        self.files_box_unsynced = tk.Listbox(self.left_frame, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectbackground="#1f538d", selectforeground="white", font=("Segoe UI", 10), height=8)
+        self.files_box_unsynced = tk.Listbox(self.sourcing_files_subframe, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectbackground="#1f538d", selectforeground="white", font=("Segoe UI", 10), height=8)
         self.files_box_unsynced.pack(fill="both", expand=True, padx=10, pady=(2, 5))
 
-        self.synced_lbl = ctk.CTkLabel(self.left_frame, text="✅ Synced Quotes:", anchor="w", font=ctk.CTkFont(weight="bold"))
+        self.synced_lbl = ctk.CTkLabel(self.sourcing_files_subframe, text="✅ Synced Quotes:", anchor="w", font=ctk.CTkFont(weight="bold"))
         self.synced_lbl.pack(fill="x", padx=10, pady=(5, 0))
 
-        self.files_box_synced = tk.Listbox(self.left_frame, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectbackground="#1f538d", selectforeground="white", font=("Segoe UI", 10), height=8)
+        self.files_box_synced = tk.Listbox(self.sourcing_files_subframe, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectbackground="#1f538d", selectforeground="white", font=("Segoe UI", 10), height=8)
         self.files_box_synced.pack(fill="both", expand=True, padx=10, pady=(2, 5))
 
         # Control Buttons
-        self.btn_start = ctk.CTkButton(self.left_frame, text="Start Extraction", state="disabled", command=self.start_extraction_thread)
+        self.btn_start = ctk.CTkButton(self.sourcing_files_subframe, text="Start Extraction", state="disabled", command=self.start_extraction_thread)
         self.btn_start.pack(fill="x", padx=10, pady=5)
 
-        self.btn_organize = ctk.CTkButton(self.left_frame, text="📁 Organize Files", fg_color="#6e4513", hover_color="#52320b", command=self.start_file_organizer_thread)
+        self.btn_organize = ctk.CTkButton(self.sourcing_files_subframe, text="📁 Organize Files", fg_color="#6e4513", hover_color="#52320b", command=self.start_file_organizer_thread)
         self.btn_organize.pack(fill="x", padx=10, pady=5)
 
-        self.progress_bar = ctk.CTkProgressBar(self.left_frame)
+        self.progress_bar = ctk.CTkProgressBar(self.sourcing_files_subframe)
         self.progress_bar.pack(fill="x", padx=10, pady=5)
         self.progress_bar.set(0)
 
-        # --- MIDDLE PANEL: CTkTabview Container ---
-        self.right_frame = ctk.CTkFrame(self, corner_radius=0)
-        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        self.right_frame.grid_columnconfigure(0, weight=1)
-        self.right_frame.grid_rowconfigure(0, weight=1)
-
-        self.tabview = ctk.CTkTabview(self.right_frame)
-        self.tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        # --- Settings & API page layout ---
+        tab_settings = self.pages["Settings & API"]
         
-        self.tabview.add("📊 Quotes Comparison")
-        self.tabview.add("📇 Supplier Directory")
-        self.tabview.add("📈 Visual Charts")
-        self.tabview.add("💡 AI Sourcing Insights")
-        self.tabview.add("🏆 Supplier Scorecard")
-        self.tabview.add("📅 Sourcing Timeline")
-        self.tabview.add("📦 Landed Cost Simulator")
-        self.tabview.add("🎯 Purchase Optimizer")
-        self.tabview.add("📝 RFQ Generator")
-        self.tabview.add("💰 Profit Simulator")
-        self.tabview.add("🏢 Factory Audit & QC")
-        self.tabview.add("🧮 Sourcing Matrix")
-        self.tabview.add("🔍 AI Visual Search")
-        self.tabview.add("🇦🇪 UAE Customs & HS Code")
-        self.tabview.add("🚢 Container Packing")
+        settings_card = ctk.CTkFrame(tab_settings, fg_color="#2b2b2b")
+        settings_card.pack(pady=20, padx=20, fill="both", expand=True)
+        
+        ctk.CTkLabel(settings_card, text="⚙️ Sourcing API & Environment Settings", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(20, 15), padx=20, anchor="w")
+        
+        # Provider selector
+        self.provider_lbl = ctk.CTkLabel(settings_card, text="API Provider:")
+        self.provider_lbl.pack(fill="x", padx=20, pady=(5, 2), anchor="w")
+        
+        self.provider_cb = ctk.CTkComboBox(settings_card, values=["Google Gemini", "Custom OpenAI/Luna"], command=self.on_provider_changed, width=400)
+        self.provider_cb.pack(pady=2, padx=20, anchor="w")
+        self.provider_cb.set("Google Gemini")
 
-        # --- TAB 1: Quotes Comparison Grid and Chatbot ---
-        tab_comp = self.tabview.tab("📊 Quotes Comparison")
-        tab_comp.grid_columnconfigure(0, weight=1)
-        tab_comp.grid_rowconfigure(2, weight=1)
+        # API Key
+        self.api_lbl = ctk.CTkLabel(settings_card, text="Gemini API Key:")
+        self.api_lbl.pack(fill="x", padx=20, pady=(5, 2), anchor="w")
+        
+        self.api_entry = ctk.CTkEntry(settings_card, placeholder_text="AIzaSy...", show="*", width=400)
+        self.api_entry.pack(pady=2, padx=20, anchor="w")
+        if self.api_key:
+            self.api_entry.insert(0, self.api_key)
 
-        # Row 0: Upper controls (Add, Edit, Delete, Paste)
-        self.table_ctrl_frame = ctk.CTkFrame(tab_comp, fg_color="transparent")
+        # Custom API inputs
+        self.custom_api_frame = ctk.CTkFrame(settings_card, fg_color="transparent")
+        
+        self.base_url_lbl = ctk.CTkLabel(self.custom_api_frame, text="Base URL:")
+        self.base_url_lbl.pack(fill="x", pady=(5, 2), anchor="w")
+        self.base_url_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="https://api.openai.com/v1", width=400)
+        self.base_url_entry.pack(pady=2, anchor="w")
+        self.base_url_entry.insert(0, "https://api.openai.com/v1")
+        
+        self.model_lbl = ctk.CTkLabel(self.custom_api_frame, text="Model Name:")
+        self.model_lbl.pack(fill="x", pady=(5, 2), anchor="w")
+        self.model_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="gpt-5.6-luna", width=400)
+        self.model_entry.pack(pady=2, anchor="w")
+        self.model_entry.insert(0, "gpt-5.6-luna")
+
+        self.btn_save_api = ctk.CTkButton(settings_card, text="Save & Test Key", command=self.save_and_test_key, width=200)
+        self.btn_save_api.pack(pady=15, padx=20, anchor="w")
+
+        # Safety Zone card inside Settings page
+        safety_card = ctk.CTkFrame(settings_card, fg_color="#3c2424")
+        safety_card.pack(pady=20, padx=20, fill="x")
+        
+        ctk.CTkLabel(safety_card, text="🚨 Danger Zone", font=ctk.CTkFont(weight="bold"), text_color="#ff8888").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        self.btn_clear_all = ctk.CTkButton(safety_card, text="🧹 Clear All Data", fg_color="#a83232", hover_color="#8c2626", command=self.clear_all_data)
+        self.btn_clear_all.pack(side="left", padx=15, pady=(5, 15))
+        
+        ctk.CTkLabel(safety_card, text="Warning: Clicking this button permanently purges all quotation records, scorecard data, compliance audits, and attachments from the local database.", font=ctk.CTkFont(size=11), text_color="grey").pack(side="left", padx=10, pady=(5, 15))
+
+        # --- Landed & Packing inner tabview ---
+        tab_landed_base = self.pages["Landed & Packing"]
+        self.logistics_tabview = ctk.CTkTabview(tab_landed_base)
+        self.logistics_tabview.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        tab_landed = self.logistics_tabview.add("📦 Landed Cost Simulator")
+        tab_opt = self.logistics_tabview.add("🎯 Purchase Optimizer")
+        tab_packing = self.logistics_tabview.add("🚢 Container Packing")
+
+        # --- Re-grid Sourcing Grid elements inside subframe ---
+        self.table_ctrl_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
         self.table_ctrl_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
 
         self.table_lbl = ctk.CTkLabel(self.table_ctrl_frame, text="Extracted Quotes Comparison", font=ctk.CTkFont(size=18, weight="bold"))
@@ -482,22 +538,19 @@ class App(ctk.CTk):
         self.btn_paste_chat = ctk.CTkButton(self.table_ctrl_frame, text="📋 Paste Chat", width=90, fg_color="#1f538d", command=self.open_paste_chat_window)
         self.btn_paste_chat.pack(side="right", padx=5)
 
-        # Row 1: Search box & Clear All Database button
-        self.search_frame = ctk.CTkFrame(tab_comp, fg_color="transparent")
+        # Row 1: Search box
+        self.search_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
         self.search_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
         
         self.search_entry = ctk.CTkEntry(self.search_frame, placeholder_text="🔍 Type to filter by supplier, product, color, specs, etc...", height=28)
-        self.search_entry.pack(side="left", fill="x", expand=True, padx=(5, 5), pady=5)
+        self.search_entry.pack(fill="x", expand=True, padx=5, pady=5)
         self.search_entry.bind("<KeyRelease>", lambda event: self.filter_table())
-        
-        self.btn_clear_all = ctk.CTkButton(self.search_frame, text="🧹 Clear All Data", width=120, fg_color="#a83232", hover_color="#8c2626", command=self.clear_all_data)
-        self.btn_clear_all.pack(side="right", padx=(5, 5), pady=5)
 
         # Row 2: Treeview styled table
-        self.setup_table(tab_comp)
+        self.setup_table(self.sourcing_grid_subframe)
 
         # Row 4: AI Procurement Chatbot Panel
-        self.chat_panel = ctk.CTkFrame(tab_comp, height=180)
+        self.chat_panel = ctk.CTkFrame(self.sourcing_grid_subframe, height=180)
         self.chat_panel.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
         self.chat_panel.grid_propagate(False)
         self.chat_panel.grid_columnconfigure(0, weight=1)
@@ -521,7 +574,7 @@ class App(ctk.CTk):
         self.btn_chat_send.grid(row=0, column=1, sticky="e")
 
         # Row 5: Export Buttons & Currency dropdown
-        self.export_frame = ctk.CTkFrame(tab_comp, fg_color="transparent")
+        self.export_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
         self.export_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=10)
 
         self.currency_lbl = ctk.CTkLabel(self.export_frame, text="Currency:")
@@ -541,8 +594,8 @@ class App(ctk.CTk):
 
 
 
-        # --- TAB 2: Supplier Directory ---
-        tab_dir = self.tabview.tab("📇 Supplier Directory")
+        # --- PAGE 2: Supplier Directory ---
+        tab_dir = self.pages["Supplier Directory"]
         tab_dir.grid_columnconfigure(0, weight=1)
         tab_dir.grid_rowconfigure(1, weight=1)
 
@@ -561,8 +614,8 @@ class App(ctk.CTk):
         self.directory_scroll_frame = ctk.CTkScrollableFrame(tab_dir, fg_color="#2b2b2b")
         self.directory_scroll_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
 
-        # --- TAB 3: Visual Price Comparison Charts ---
-        tab_charts = self.tabview.tab("📈 Visual Charts")
+        # --- PAGE 3: Visual Price Comparison Charts ---
+        tab_charts = self.pages["Visual Charts"]
         tab_charts.grid_columnconfigure(0, weight=1)
         tab_charts.grid_rowconfigure(1, weight=1)
 
@@ -658,6 +711,7 @@ class App(ctk.CTk):
         self.load_config()
         self.load_chat_history_from_db()
         self.load_all_quotes_from_db()
+        self.show_page("Sourcing Grid")
 
     def get_validity_display(self, date_str):
         if not date_str or date_str.lower() in ["n/a", "null", "none", ""]:
@@ -1748,6 +1802,28 @@ class App(ctk.CTk):
             self.custom_api_frame.pack_forget()
             self.api_lbl.configure(text="Gemini API Key:")
 
+    def show_page(self, page_name):
+        # Hide all pages
+        for name, frame in self.pages.items():
+            frame.grid_forget()
+            
+        # Show selected page
+        self.pages[page_name].grid(row=0, column=0, sticky="nsew")
+        self.active_page = page_name
+        
+        # Highlight active sidebar button
+        for name, btn in self.sidebar_buttons.items():
+            if name == page_name:
+                btn.configure(fg_color="#1f538d")
+            else:
+                btn.configure(fg_color="transparent")
+                
+        # Toggle document preview frame visibility based on page
+        if page_name in ["Sourcing Grid", "Sourcing Matrix", "Supplier Directory"]:
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+        else:
+            self.preview_frame.grid_forget()
+
     # --- Folder Logic ---
     def select_folder(self):
         folder = filedialog.askdirectory(initialdir=self.selected_folder)
@@ -2755,7 +2831,7 @@ class App(ctk.CTk):
         threading.Thread(target=run_pdf_gen, daemon=True).start()
 
     def setup_sourcing_insights_tab(self):
-        tab_insights = self.tabview.tab("💡 AI Sourcing Insights")
+        tab_insights = self.pages["AI Insights"]
         tab_insights.grid_columnconfigure(0, weight=1)
         tab_insights.grid_columnconfigure(1, weight=1)
         tab_insights.grid_rowconfigure(1, weight=1)
@@ -3127,7 +3203,7 @@ class App(ctk.CTk):
             self.after(0, lambda err=e: messagebox.showerror("Error", f"Failed to organize files: {err}"))
 
     def setup_scorecard_tab(self):
-        tab_scorecard = self.tabview.tab("🏆 Supplier Scorecard")
+        tab_scorecard = self.pages["Supplier Scorecard"]
         tab_scorecard.grid_columnconfigure(0, weight=3)
         tab_scorecard.grid_columnconfigure(1, weight=1)
         tab_scorecard.grid_rowconfigure(1, weight=1)
@@ -3496,7 +3572,7 @@ class App(ctk.CTk):
             val_lbl.grid(row=idx+1, column=1, sticky="w", padx=10, pady=2)
 
     def setup_timeline_tab(self):
-        tab_timeline = self.tabview.tab("📅 Sourcing Timeline")
+        tab_timeline = self.pages["Sourcing Timeline"]
         tab_timeline.grid_columnconfigure(0, weight=1)
         tab_timeline.grid_columnconfigure(1, weight=1)
         tab_timeline.grid_rowconfigure(1, weight=1)
@@ -4036,7 +4112,7 @@ class App(ctk.CTk):
         threading.Thread(target=run_generation, daemon=True).start()
 
     def setup_landed_cost_tab(self):
-        tab_landed = self.tabview.tab("📦 Landed Cost Simulator")
+        tab_landed = self.logistics_tabview.tab("📦 Landed Cost Simulator")
         tab_landed.grid_columnconfigure(0, weight=1)
         tab_landed.grid_columnconfigure(1, weight=3)
         tab_landed.grid_rowconfigure(1, weight=1)
@@ -4319,7 +4395,7 @@ class App(ctk.CTk):
             )
 
     def setup_purchase_optimizer_tab(self):
-        tab_opt = self.tabview.tab("🎯 Purchase Optimizer")
+        tab_opt = self.logistics_tabview.tab("🎯 Purchase Optimizer")
         tab_opt.grid_columnconfigure(0, weight=1)
         tab_opt.grid_columnconfigure(1, weight=1)
         tab_opt.grid_rowconfigure(1, weight=1)
@@ -4613,7 +4689,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(self.opt_results_scroll, text="⚠️ No single supplier in database quotes all selected products.", text_color="grey").pack(pady=10)
 
     def setup_rfq_generator_tab(self):
-        tab_rfq = self.tabview.tab("📝 RFQ Generator")
+        tab_rfq = self.pages["RFQ Generator"]
         tab_rfq.grid_columnconfigure(0, weight=1)
         tab_rfq.grid_columnconfigure(1, weight=1)
         tab_rfq.grid_rowconfigure(1, weight=1)
@@ -4893,7 +4969,7 @@ class App(ctk.CTk):
             messagebox.showerror("Error", f"Failed to generate RFQ PDF: {e}")
 
     def setup_profit_simulator_tab(self):
-        tab_prof = self.tabview.tab("💰 Profit Simulator")
+        tab_prof = self.pages["Profit Simulator"]
         tab_prof.grid_columnconfigure(0, weight=1)
         tab_prof.grid_columnconfigure(1, weight=3)
         tab_prof.grid_rowconfigure(1, weight=1)
@@ -5121,7 +5197,7 @@ class App(ctk.CTk):
             )
 
     def setup_factory_qc_tab(self):
-        tab_qc = self.tabview.tab("🏢 Factory Audit & QC")
+        tab_qc = self.pages["Factory Audit & QC"]
         tab_qc.grid_columnconfigure(0, weight=1)
         tab_qc.grid_columnconfigure(1, weight=1)
         tab_qc.grid_rowconfigure(1, weight=1)
@@ -5400,7 +5476,7 @@ class App(ctk.CTk):
                 self.after(0, lambda: self.currency_status_lbl.configure(text="Offline Rates: 1 USD = 7.25 CNY | 0.92 EUR", text_color="grey"))
 
     def setup_sourcing_matrix_tab(self):
-        self.matrix_tab = self.tabview.tab("🧮 Sourcing Matrix")
+        self.matrix_tab = self.pages["Sourcing Matrix"]
         self.matrix_tab.grid_columnconfigure(0, weight=1)
         self.matrix_tab.grid_rowconfigure(1, weight=1)
 
@@ -5652,7 +5728,7 @@ class App(ctk.CTk):
         webbrowser.open(mail_url)
 
     def setup_uae_customs_tab(self):
-        tab_uae = self.tabview.tab("🇦🇪 UAE Customs & HS Code")
+        tab_uae = self.pages["UAE Customs"]
         tab_uae.grid_columnconfigure(0, weight=1)
         tab_uae.grid_columnconfigure(1, weight=1)
         tab_uae.grid_rowconfigure(1, weight=1)
@@ -5854,7 +5930,7 @@ AI TARIFF & COMPLIANCE DETAIL:
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def setup_container_packing_tab(self):
-        tab_packing = self.tabview.tab("🚢 Container Packing")
+        tab_packing = self.logistics_tabview.tab("🚢 Container Packing")
         tab_packing.grid_columnconfigure(0, weight=1)
         tab_packing.grid_columnconfigure(1, weight=1)
         tab_packing.grid_rowconfigure(1, weight=1)
@@ -6010,7 +6086,7 @@ Sourcing Action Guidance:
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def setup_visual_search_tab(self):
-        tab_search = self.tabview.tab("🔍 AI Visual Search")
+        tab_search = self.pages["AI Visual Search"]
         tab_search.grid_columnconfigure(0, weight=1)
         tab_search.grid_columnconfigure(1, weight=1)
         tab_search.grid_rowconfigure(1, weight=1)
