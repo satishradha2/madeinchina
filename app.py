@@ -157,6 +157,17 @@ def init_db():
             defect_rate REAL
         )
     """)
+    # Table for operational incidents & defects log
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS supplier_incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier TEXT,
+            incident_type TEXT,
+            description TEXT,
+            severity TEXT,
+            logged_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     
     # Auto-populate contacts from existing quotes
@@ -586,9 +597,30 @@ class App(ctk.CTk):
                 pass
         return date_str
 
-    def get_risk_display(self, risk_str):
+    def get_risk_display(self, risk_str, supplier_name=None):
+        cleaned_sup = self.clean_supplier_name(supplier_name) if supplier_name else None
+        incidents = self.supplier_incidents_map.get(cleaned_sup, []) if hasattr(self, 'supplier_incidents_map') and cleaned_sup else []
+        
+        max_severity = None
+        incident_types = []
+        for sev, inc_type in incidents:
+            incident_types.append(inc_type)
+            if sev == "High":
+                max_severity = "High"
+            elif sev == "Medium" and max_severity != "High":
+                max_severity = "Medium"
+            elif sev == "Low" and max_severity not in ["High", "Medium"]:
+                max_severity = "Low"
+                
+        if max_severity == "High":
+            return f"🔴 High Risk (Incident: {', '.join(set(incident_types))})"
+        elif max_severity == "Medium":
+            return f"🟡 Medium Risk (Incident: {', '.join(set(incident_types))})"
+        elif max_severity == "Low" and (not risk_str or risk_str.lower() in ["n/a", "null", "none", ""]):
+            return "🟢 Low Risk (Logged Incident: Low)"
+
         if not risk_str or risk_str.lower() in ["n/a", "null", "none", ""]:
-            return "Low Risk"
+            return "🟢 Low Risk"
         r_lower = risk_str.lower()
         if "high" in r_lower or "prepayment" in r_lower or "expired" in r_lower:
             return f"🔴 {risk_str}"
@@ -990,13 +1022,28 @@ class App(ctk.CTk):
                 row_data["term"],
                 row_data["lead_time"],
                 self.get_validity_display(row_data.get("validity_date")),
-                self.get_risk_display(row_data.get("sourcing_risk"))
+                self.get_risk_display(row_data.get("sourcing_risk"), supplier_name=row_data.get("supplier"))
             ), tags=tags)
 
     # --- DB Retrieval ---
     def load_all_quotes_from_db(self):
         self.tree.delete(*self.tree.get_children())
         self.extracted_data = []
+
+        # Load incident status mapping
+        self.supplier_incidents_map = {}
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT supplier, severity, incident_type FROM supplier_incidents")
+            for sup_n, sev_v, inc_t in c.fetchall():
+                sup_clean = self.clean_supplier_name(sup_n)
+                if sup_clean not in self.supplier_incidents_map:
+                    self.supplier_incidents_map[sup_clean] = []
+                self.supplier_incidents_map[sup_clean].append((sev_v, inc_t))
+            conn.close()
+        except Exception as e:
+            print("Error loading incidents:", e)
 
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -5014,6 +5061,28 @@ class App(ctk.CTk):
         self.btn_export_qc_pdf = ctk.CTkButton(right_frame, text="📋 Export QC Checklist PDF", fg_color="#6e4513", hover_color="#52320b", command=self.generate_qc_checklist_pdf)
         self.btn_export_qc_pdf.grid(row=2, column=0, padx=15, pady=20, sticky="ew")
 
+        # Incident Log section
+        ctk.CTkLabel(right_frame, text="🚨 Log Operational Incident / Defect", font=ctk.CTkFont(size=14, weight="bold")).grid(row=3, column=0, padx=15, pady=(15, 5), sticky="w")
+        
+        inc_input_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        inc_input_frame.grid(row=4, column=0, padx=15, pady=5, sticky="ew")
+        inc_input_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(inc_input_frame, text="Type:").grid(row=0, column=0, padx=(0, 10), pady=2, sticky="w")
+        self.qc_inc_type_cb = ctk.CTkComboBox(inc_input_frame, values=["Delay", "Defect", "Communication", "Payment"], width=120)
+        self.qc_inc_type_cb.grid(row=0, column=1, padx=5, pady=2, sticky="w")
+        
+        ctk.CTkLabel(inc_input_frame, text="Severity:").grid(row=0, column=2, padx=10, pady=2, sticky="w")
+        self.qc_inc_sev_cb = ctk.CTkComboBox(inc_input_frame, values=["Low", "Medium", "High"], width=100)
+        self.qc_inc_sev_cb.grid(row=0, column=3, padx=5, pady=2, sticky="w")
+        
+        ctk.CTkLabel(right_frame, text="Description:").grid(row=5, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.qc_inc_desc_entry = ctk.CTkEntry(right_frame, placeholder_text="e.g. 5 days delay on batch #4, 2% seam tear defect rate")
+        self.qc_inc_desc_entry.grid(row=6, column=0, padx=15, pady=2, sticky="ew")
+        
+        self.btn_log_incident = ctk.CTkButton(right_frame, text="🚨 Log Performance Incident", fg_color="#bf3b3b", hover_color="#9e2d2d", command=self.log_supplier_incident)
+        self.btn_log_incident.grid(row=7, column=0, padx=15, pady=(10, 15), sticky="ew")
+
     def update_factory_qc_tab(self):
         suppliers = set()
         for r in self.extracted_data:
@@ -5487,6 +5556,36 @@ class App(ctk.CTk):
                 ctk.CTkLabel(card, text=rationale, font=ctk.CTkFont(size=11), text_color="grey", justify="left").pack(padx=15, pady=(0, 10), fill="x")
 
         threading.Thread(target=run_ai_scan, daemon=True).start()
+
+    def log_supplier_incident(self):
+        supplier = self.qc_supplier_cb.get()
+        if not supplier or supplier == "Select Supplier":
+            messagebox.showwarning("Warning", "Please select a supplier first!")
+            return
+            
+        inc_type = self.qc_inc_type_cb.get()
+        severity = self.qc_inc_sev_cb.get()
+        desc = self.qc_inc_desc_entry.get().strip()
+        
+        if not desc:
+            messagebox.showwarning("Warning", "Please enter an incident description!")
+            return
+            
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO supplier_incidents (supplier, incident_type, description, severity)
+                VALUES (?, ?, ?, ?)
+            """, (supplier, inc_type, desc, severity))
+            conn.commit()
+            conn.close()
+            
+            self.qc_inc_desc_entry.delete(0, tk.END)
+            messagebox.showinfo("Success", f"Operational incident ({inc_type} - {severity}) logged for {supplier}!")
+            self.load_all_quotes_from_db()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to log incident: {e}")
 
 if __name__ == "__main__":
     app = App()
