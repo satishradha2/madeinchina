@@ -380,6 +380,7 @@ class App(ctk.CTk):
         self.tabview.add("🏢 Factory Audit & QC")
         self.tabview.add("🧮 Sourcing Matrix")
         self.tabview.add("🔍 AI Visual Search")
+        self.tabview.add("🇦🇪 UAE Customs & HS Code")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -536,6 +537,9 @@ class App(ctk.CTk):
 
         # Setup AI Visual Search tab
         self.setup_visual_search_tab()
+
+        # Setup UAE Customs & HS Code tab
+        self.setup_uae_customs_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -1097,6 +1101,8 @@ class App(ctk.CTk):
             self.update_factory_qc_tab()
         if hasattr(self, 'matrix_frame'):
             self.update_sourcing_matrix_tab()
+        if hasattr(self, 'uae_category_cb'):
+            self.update_uae_customs_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -5524,6 +5530,144 @@ class App(ctk.CTk):
         subject = f"Request for Quote: {product}"
         mail_url = f"mailto:{email}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
         webbrowser.open(mail_url)
+
+    def setup_uae_customs_tab(self):
+        tab_uae = self.tabview.tab("🇦🇪 UAE Customs & HS Code")
+        tab_uae.grid_columnconfigure(0, weight=1)
+        tab_uae.grid_columnconfigure(1, weight=1)
+        tab_uae.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_uae, text="UAE Customs Tariff & HS Code Classifier", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Sourcing Inputs ---
+        left_frame = ctk.CTkFrame(tab_uae)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="🇦🇪 Import Configuration", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+
+        ctk.CTkLabel(left_frame, text="Product Category:").grid(row=1, column=0, padx=15, pady=5, sticky="w")
+        self.uae_category_cb = ctk.CTkComboBox(left_frame, values=["Custom"])
+        self.uae_category_cb.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
+
+        ctk.CTkLabel(left_frame, text="Or Custom Product Name:").grid(row=2, column=0, padx=15, pady=5, sticky="w")
+        self.uae_custom_name = ctk.CTkEntry(left_frame, placeholder_text="e.g. Paper Cup / Mask")
+        self.uae_custom_name.grid(row=2, column=1, padx=15, pady=5, sticky="ew")
+
+        ctk.CTkLabel(left_frame, text="CIF Value (USD):").grid(row=3, column=0, padx=15, pady=5, sticky="w")
+        self.uae_cif_entry = ctk.CTkEntry(left_frame)
+        self.uae_cif_entry.grid(row=3, column=1, padx=15, pady=5, sticky="ew")
+        self.uae_cif_entry.insert(0, "15000")
+
+        self.btn_classify_uae = ctk.CTkButton(left_frame, text="🔍 Classify HS Code & Duties", fg_color="#1f538d", hover_color="#153e6b", command=self.run_uae_customs_evaluation)
+        self.btn_classify_uae.grid(row=4, column=0, columnspan=2, padx=15, pady=25, sticky="ew")
+
+        # --- RIGHT PANEL: AI Customs Analysis Summary ---
+        right_frame = ctk.CTkFrame(tab_uae)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📋 UAE Customs Duty Projections", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        self.uae_customs_output = ctk.CTkTextbox(right_frame, font=("Consolas", 11))
+        self.uae_customs_output.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
+        self.uae_customs_output.insert("1.0", "Select a product and CIF value to calculate UAE duties and look up HS Tariff codes.")
+        self.uae_customs_output.configure(state="disabled")
+
+    def update_uae_customs_tab(self):
+        products = set()
+        for r in self.extracted_data:
+            prod = (r.get("product") or "").strip().title()
+            if prod:
+                products.add(prod)
+        sorted_prods = ["Custom"] + sorted(list(products))
+        self.uae_category_cb.configure(values=sorted_prods)
+        if sorted_prods:
+            self.uae_category_cb.set(sorted_prods[0])
+
+    def run_uae_customs_evaluation(self):
+        choice = self.uae_category_cb.get()
+        custom = self.uae_custom_name.get().strip()
+        
+        prod_name = custom if choice == "Custom" else choice
+        if not prod_name:
+            messagebox.showwarning("Warning", "Please select a category or enter a custom product name!")
+            return
+            
+        try:
+            cif_val = float(self.uae_cif_entry.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "CIF Value must be a valid number!")
+            return
+
+        self.btn_classify_uae.configure(state="disabled", text="Querying UAE Tariff Database...")
+        self.update()
+
+        def run_ai_classification():
+            ai_prompt = f"""
+            Identify the Harmonized System (HS) Code and estimate the import customs tariff details for:
+            - Product: {prod_name}
+            - Import Country: United Arab Emirates (UAE)
+            - CIF Value: ${cif_val:.2f} USD
+            
+            Determine:
+            1. Recommended 6-digit Harmonized System (HS) Code.
+            2. Standard UAE Customs Duty Rate (usually 5% for standard goods under the GCC Common Customs Law).
+            3. Excise Tax (if applicable, e.g. sugary/energy drinks, tobacco).
+            4. Import VAT Rate (5% in UAE).
+            5. Sourcing & Documentation compliance recommendations for clearing Dubai/UAE Customs (e.g. Certificate of Origin legalized by UAE Embassy, Commercial Invoice, Packing List, Industrial/Commercial Trade License).
+            
+            Write the output in a clean, highly structured dashboard format.
+            Do not use markdown syntax. Estimate the duty in AED (assume 1 USD = 3.6725 AED).
+            """
+            
+            try:
+                result_text = self.generate_with_fallback([], ai_prompt, json_response=False)
+                
+                cif_aed = cif_val * 3.6725
+                duty_rate = 0.05
+                excise_rate = 0.0
+                if any(x in prod_name.lower() for x in ["drink", "tobacco", "cigarette", "sugar"]):
+                    excise_rate = 0.50
+                
+                est_duty_aed = cif_aed * duty_rate
+                est_excise_aed = cif_aed * excise_rate
+                est_vat_aed = (cif_aed + est_duty_aed + est_excise_aed) * 0.05
+                total_cleared_aed = cif_aed + est_duty_aed + est_excise_aed + est_vat_aed
+
+                summary_header = f"""==================================================
+🇦🇪 UAE CUSTOMS IMPORT CLEARANCE PROJECTION
+==================================================
+Target Product : {prod_name}
+CIF Import Value: ${cif_val:,.2f} USD ({cif_aed:,.2f} AED)
+--------------------------------------------------
+ESTIMATED CLEARANCE COST BREAKDOWN:
+- Standard GCC Customs Duty (5%) : {est_duty_aed:,.2f} AED
+- Estimated Excise Tax           : {est_excise_aed:,.2f} AED
+- Estimated UAE Import VAT (5%)  : {est_vat_aed:,.2f} AED
+- Total Landed Cost (In UAE)     : {total_cleared_aed:,.2f} AED
+--------------------------------------------------
+AI TARIFF & COMPLIANCE DETAIL:
+{result_text}
+"""
+
+                self.after(0, lambda: display_result(summary_header))
+            except Exception as e:
+                self.after(0, lambda err=e: display_result(f"Failed to run classification:\n{err}"))
+            finally:
+                self.after(0, lambda: self.btn_classify_uae.configure(state="normal", text="🔍 Classify HS Code & Duties"))
+
+        def display_result(text):
+            self.uae_customs_output.configure(state="normal")
+            self.uae_customs_output.delete("1.0", tk.END)
+            self.uae_customs_output.insert("1.0", text)
+            self.uae_customs_output.configure(state="disabled")
+
+        threading.Thread(target=run_ai_classification, daemon=True).start()
 
     def setup_visual_search_tab(self):
         tab_search = self.tabview.tab("🔍 AI Visual Search")
