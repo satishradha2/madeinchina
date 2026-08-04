@@ -258,6 +258,13 @@ class App(ctk.CTk):
         self.quote_id_counter = 1
         self.is_extracting = False
         self.spinner_idx = 0
+        
+        self.exchange_rates = {
+            "USD": 1.0,
+            "CNY": 7.25,
+            "EUR": 0.92
+        }
+        threading.Thread(target=self.fetch_live_exchange_rates, daemon=True).start()
         self.current_preview_path = ""
 
         # Chat popup loading variables
@@ -435,6 +442,9 @@ class App(ctk.CTk):
         
         self.currency_cb = ctk.CTkComboBox(self.export_frame, values=["USD ($)", "CNY (¥)", "EUR (€)"], command=self.change_currency, width=120)
         self.currency_cb.pack(side="left", padx=5)
+
+        self.currency_status_lbl = ctk.CTkLabel(self.export_frame, text="Fetching live rates...", text_color="grey", font=ctk.CTkFont(size=11))
+        self.currency_status_lbl.pack(side="left", padx=10)
 
         self.btn_export_excel = ctk.CTkButton(self.export_frame, text="Export to Excel", fg_color="#1f7d44", hover_color="#15592e", command=self.export_to_excel)
         self.btn_export_excel.pack(side="right", padx=5)
@@ -897,10 +907,10 @@ class App(ctk.CTk):
         factor = 1.0
         symbol = "$"
         if "CNY" in currency_choice:
-            factor = 7.25
+            factor = self.exchange_rates["CNY"]
             symbol = "¥"
         elif "EUR" in currency_choice:
-            factor = 0.92
+            factor = self.exchange_rates["EUR"]
             symbol = "€"
         
         # Recalculate best price comparisons from in-memory quotes (baseline USD)
@@ -1449,11 +1459,11 @@ class App(ctk.CTk):
         symbol = "$"
         currency_name = "USD"
         if "CNY" in currency_choice:
-            factor = 7.25
+            factor = self.exchange_rates["CNY"]
             symbol = "¥"
             currency_name = "CNY"
         elif "EUR" in currency_choice:
-            factor = 0.92
+            factor = self.exchange_rates["EUR"]
             symbol = "€"
             currency_name = "EUR"
 
@@ -2160,11 +2170,11 @@ class App(ctk.CTk):
                 excel_format = '$#,##0.00000'
                 
                 if "CNY" in currency_choice:
-                    factor = 7.25
+                    factor = self.exchange_rates["CNY"]
                     price_col_header = "Unit Price (CNY)"
                     excel_format = '[$¥-804]#,##0.00000'
                 elif "EUR" in currency_choice:
-                    factor = 0.92
+                    factor = self.exchange_rates["EUR"]
                     price_col_header = "Unit Price (EUR)"
                     excel_format = '[$€-2] #,##0.00000'
 
@@ -2435,11 +2445,11 @@ class App(ctk.CTk):
                     symbol = "$"
                     factor = 1.0
                     if "CNY" in currency_choice:
-                        symbol = "¥"
-                        factor = 7.25
+                         symbol = "¥"
+                         factor = self.exchange_rates["CNY"]
                     elif "EUR" in currency_choice:
-                        symbol = "€"
-                        factor = 0.92
+                         symbol = "€"
+                         factor = self.exchange_rates["EUR"]
                         
                     try:
                         p_val = float(r["price"])
@@ -5127,6 +5137,28 @@ class App(ctk.CTk):
             messagebox.showinfo("Success", f"QC Checklist PDF generated successfully at:\n{file_path}!")
         except Exception as e:
             messagebox.showerror("Error", f"Could not generate QC PDF: {e}")
+
+    def fetch_live_exchange_rates(self):
+        import urllib.request
+        import json
+        try:
+            url = "https://open.er-api.com/v6/latest/USD"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode())
+                if data.get("result") == "success":
+                    rates = data.get("rates", {})
+                    cny_rate = rates.get("CNY", 7.25)
+                    eur_rate = rates.get("EUR", 0.92)
+                    self.exchange_rates["CNY"] = cny_rate
+                    self.exchange_rates["EUR"] = eur_rate
+                    print(f"Successfully fetched live exchange rates: CNY={cny_rate:.4f}, EUR={eur_rate:.4f}")
+                    if hasattr(self, 'currency_status_lbl'):
+                        self.after(0, lambda: self.currency_status_lbl.configure(text=f"Live Rates: 1 USD = {cny_rate:.2f} CNY | {eur_rate:.2f} EUR", text_color="green"))
+        except Exception as e:
+            print(f"Failed to fetch live exchange rates: {e}")
+            if hasattr(self, 'currency_status_lbl'):
+                self.after(0, lambda: self.currency_status_lbl.configure(text="Offline Rates: 1 USD = 7.25 CNY | 0.92 EUR", text_color="grey"))
 
 if __name__ == "__main__":
     app = App()
