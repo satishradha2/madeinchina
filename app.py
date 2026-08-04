@@ -342,6 +342,7 @@ class App(ctk.CTk):
         self.tabview.add("💡 AI Sourcing Insights")
         self.tabview.add("🏆 Supplier Scorecard")
         self.tabview.add("📅 Sourcing Timeline")
+        self.tabview.add("📦 Landed Cost Simulator")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -474,6 +475,9 @@ class App(ctk.CTk):
 
         # Setup Timeline tab
         self.setup_timeline_tab()
+
+        # Setup Landed Cost Simulator tab
+        self.setup_landed_cost_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -987,6 +991,8 @@ class App(ctk.CTk):
         self.update_sourcing_insights()
         self.update_scorecard_tab()
         self.update_timeline_tab()
+        if hasattr(self, 'sim_tree'):
+            self.update_landed_cost_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -3697,6 +3703,289 @@ class App(ctk.CTk):
         
         # Start first generation automatically
         threading.Thread(target=run_generation, daemon=True).start()
+
+    def setup_landed_cost_tab(self):
+        tab_landed = self.tabview.tab("📦 Landed Cost Simulator")
+        tab_landed.grid_columnconfigure(0, weight=1)
+        tab_landed.grid_columnconfigure(1, weight=3)
+        tab_landed.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_landed, text="Landed Cost & Logistics Freight Simulator", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Input Parameters ---
+        left_frame = ctk.CTkFrame(tab_landed)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(left_frame, text="⚙ Simulator Parameters", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
+
+        # Quantity Input
+        qty_lbl = ctk.CTkLabel(left_frame, text="Order Size (pcs):", font=ctk.CTkFont(size=12))
+        qty_lbl.pack(pady=(5, 0), padx=15, anchor="w")
+        self.sim_qty_entry = ctk.CTkEntry(left_frame, placeholder_text="100,000")
+        self.sim_qty_entry.pack(pady=2, padx=15, fill="x")
+        self.sim_qty_entry.insert(0, "100000")
+
+        # Freight Mode Segmented Button
+        mode_lbl = ctk.CTkLabel(left_frame, text="Freight Shipment Mode:", font=ctk.CTkFont(size=12))
+        mode_lbl.pack(pady=(10, 0), padx=15, anchor="w")
+        self.sim_freight_mode = ctk.CTkSegmentedButton(left_frame, values=["LCL (per CBM)", "FCL 20GP", "FCL 40HQ"], command=lambda m: self.on_freight_mode_changed(m))
+        self.sim_freight_mode.pack(pady=2, padx=15, fill="x")
+        self.sim_freight_mode.set("LCL (per CBM)")
+
+        # Freight Rate Input
+        self.rate_lbl_text = tk.StringVar(value="LCL Rate per CBM ($):")
+        rate_lbl = ctk.CTkLabel(left_frame, textvariable=self.rate_lbl_text, font=ctk.CTkFont(size=12))
+        rate_lbl.pack(pady=(10, 0), padx=15, anchor="w")
+        self.sim_rate_entry = ctk.CTkEntry(left_frame)
+        self.sim_rate_entry.pack(pady=2, padx=15, fill="x")
+        self.sim_rate_entry.insert(0, "120")
+
+        # Duty Rate Percent Slider/Input
+        duty_lbl = ctk.CTkLabel(left_frame, text="Customs Duty Rate (%):", font=ctk.CTkFont(size=12))
+        duty_lbl.pack(pady=(10, 0), padx=15, anchor="w")
+        
+        duty_row = ctk.CTkFrame(left_frame, fg_color="transparent")
+        duty_row.pack(fill="x", padx=15, pady=2)
+        
+        self.sim_duty_slider = ctk.CTkSlider(duty_row, from_=0, to=30, number_of_steps=60, command=lambda v: self.on_duty_slider_changed(v))
+        self.sim_duty_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.sim_duty_slider.set(6.5)
+        
+        self.sim_duty_val_lbl = ctk.CTkLabel(duty_row, text="6.5%", width=45)
+        self.sim_duty_val_lbl.pack(side="right")
+
+        # Local Customs / Clearance Flat Fee
+        local_lbl = ctk.CTkLabel(left_frame, text="Local Fees & Clearance (Flat $):", font=ctk.CTkFont(size=12))
+        local_lbl.pack(pady=(10, 0), padx=15, anchor="w")
+        self.sim_local_entry = ctk.CTkEntry(left_frame)
+        self.sim_local_entry.pack(pady=2, padx=15, fill="x")
+        self.sim_local_entry.insert(0, "350")
+
+        # Recalculate Button
+        self.btn_calc_sim = ctk.CTkButton(left_frame, text="📊 Run Simulation", fg_color="#1f538d", hover_color="#153e6b", command=self.update_landed_cost_tab)
+        self.btn_calc_sim.pack(pady=25, padx=15, fill="x")
+
+        # --- RIGHT PANEL: Comparison Grid ---
+        right_frame = ctk.CTkFrame(tab_landed)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📊 Landed Cost Comparison (FOB to DDP)", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        # Treeview Comparison table
+        cols = ("supplier", "product", "unit_fob", "est_cbm", "freight_pc", "duty_pc", "local_pc", "landed_pc", "total_cost")
+        
+        scroll_y = ttk.Scrollbar(right_frame, orient="vertical")
+        scroll_x = ttk.Scrollbar(right_frame, orient="horizontal")
+        
+        self.sim_tree = ttk.Treeview(
+            right_frame,
+            columns=cols,
+            show="headings",
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set
+        )
+        
+        scroll_y.config(command=self.sim_tree.yview)
+        scroll_x.config(command=self.sim_tree.xview)
+        
+        scroll_y.grid(row=1, column=1, sticky="ns")
+        scroll_x.grid(row=2, column=0, sticky="ew")
+        self.sim_tree.grid(row=1, column=0, sticky="nsew", padx=(15, 0))
+
+        # Setup Headings
+        self.sim_tree.heading("supplier", text="Supplier")
+        self.sim_tree.heading("product", text="Product")
+        self.sim_tree.heading("unit_fob", text="FOB ($/pc)")
+        self.sim_tree.heading("est_cbm", text="Est CBM")
+        self.sim_tree.heading("freight_pc", text="Freight/pc")
+        self.sim_tree.heading("duty_pc", text="Duty/pc")
+        self.sim_tree.heading("local_pc", text="Local/pc")
+        self.sim_tree.heading("landed_pc", text="Landed ($/pc)")
+        self.sim_tree.heading("total_cost", text="Total Landed")
+
+        # Setup Widths
+        self.sim_tree.column("supplier", width=140, anchor="w")
+        self.sim_tree.column("product", width=120, anchor="w")
+        self.sim_tree.column("unit_fob", width=80, anchor="center")
+        self.sim_tree.column("est_cbm", width=70, anchor="center")
+        self.sim_tree.column("freight_pc", width=80, anchor="center")
+        self.sim_tree.column("duty_pc", width=80, anchor="center")
+        self.sim_tree.column("local_pc", width=80, anchor="center")
+        self.sim_tree.column("landed_pc", width=95, anchor="center")
+        self.sim_tree.column("total_cost", width=105, anchor="center")
+
+        self.sim_tree.tag_configure("winner", background="#1e4620", foreground="white")
+
+    def on_freight_mode_changed(self, mode):
+        if mode == "LCL (per CBM)":
+            self.rate_lbl_text.set("LCL Rate per CBM ($):")
+            self.sim_rate_entry.delete(0, tk.END)
+            self.sim_rate_entry.insert(0, "120")
+        elif mode == "FCL 20GP":
+            self.rate_lbl_text.set("20GP Container Cost ($):")
+            self.sim_rate_entry.delete(0, tk.END)
+            self.sim_rate_entry.insert(0, "3000")
+        else:
+            self.rate_lbl_text.set("40HQ Container Cost ($):")
+            self.sim_rate_entry.delete(0, tk.END)
+            self.sim_rate_entry.insert(0, "4500")
+        self.update_landed_cost_tab()
+
+    def on_duty_slider_changed(self, val):
+        self.sim_duty_val_lbl.configure(text=f"{val:.1f}%")
+        self.update_landed_cost_tab()
+
+    def parse_packing_metrics(self, packing_str):
+        pcs_per_ctn = 1000
+        unit_cbm = 0.05
+        
+        if not packing_str or packing_str == "N/A":
+            return pcs_per_ctn, unit_cbm
+            
+        import re
+        packing_lower = packing_str.lower()
+        
+        # 1. Try to find CBM
+        cbm_match = re.search(r'([0-9.]+)\s*(cbm|m3|cubic|meas)', packing_lower)
+        if cbm_match:
+            try:
+                unit_cbm = float(cbm_match.group(1))
+            except Exception:
+                pass
+        else:
+            dim_match = re.findall(r'([0-9.]+)\s*[\*xX]\s*([0-9.]+)\s*[\*xX]\s*([0-9.]+)', packing_lower)
+            if dim_match:
+                try:
+                    w, h, d = map(float, dim_match[0])
+                    unit_cbm = (w * h * d) / 1000000.0
+                except Exception:
+                    pass
+                    
+        # 2. Try to find pieces per carton
+        ctn_match = re.search(r'([0-9,]+)\s*(pcs|pieces)?\s*(/|per)\s*(ctn|carton|box|case)', packing_lower)
+        if ctn_match:
+            try:
+                num_str = ctn_match.group(1).replace(",", "")
+                pcs_per_ctn = int(num_str)
+            except Exception:
+                pass
+        else:
+            pcs_match = re.findall(r'([0-9,]+)\s*(pcs|pieces|bags)?/ctn', packing_lower)
+            if pcs_match:
+                try:
+                    pcs_per_ctn = int(pcs_match[0][0].replace(",", ""))
+                except Exception:
+                    pass
+                    
+        return pcs_per_ctn, unit_cbm
+
+    def update_landed_cost_tab(self):
+        for item in self.sim_tree.get_children():
+            self.sim_tree.delete(item)
+
+        if not self.extracted_data:
+            return
+
+        import math
+        try:
+            order_qty = int(self.sim_qty_entry.get().replace(",", "").strip())
+        except Exception:
+            order_qty = 100000
+            
+        try:
+            freight_rate = float(self.sim_rate_entry.get().replace(",", "").strip())
+        except Exception:
+            freight_rate = 120.0
+
+        duty_percent = self.sim_duty_slider.get()
+
+        try:
+            local_flat = float(self.sim_local_entry.get().replace(",", "").strip())
+        except Exception:
+            local_flat = 350.0
+
+        freight_mode = self.sim_freight_mode.get()
+
+        sim_rows = []
+        for r in self.extracted_data:
+            fob = r.get("price")
+            if fob is None or fob == "N/A":
+                continue
+                
+            supplier = self.clean_supplier_name(r.get("supplier"))
+            product = r.get("product") or "Product"
+            packing = r.get("packing") or "N/A"
+            
+            pcs_per_ctn, unit_cbm = self.parse_packing_metrics(packing)
+            
+            total_ctns = math.ceil(order_qty / pcs_per_ctn)
+            total_cbm = total_ctns * unit_cbm
+            
+            total_fob = order_qty * fob
+            
+            if freight_mode == "LCL (per CBM)":
+                total_freight = total_cbm * freight_rate
+            elif freight_mode == "FCL 20GP":
+                containers = math.ceil(total_cbm / 28.0)
+                total_freight = containers * freight_rate
+            else:
+                containers = math.ceil(total_cbm / 68.0)
+                total_freight = containers * freight_rate
+                
+            total_duty = total_fob * (duty_percent / 100.0)
+            total_local = local_flat
+            
+            total_landed = total_fob + total_freight + total_duty + total_local
+            landed_pc = total_landed / order_qty
+            
+            freight_pc = total_freight / order_qty
+            duty_pc = total_duty / order_qty
+            local_pc = total_local / order_qty
+            
+            sim_rows.append({
+                "supplier": supplier,
+                "product": product,
+                "unit_fob": fob,
+                "est_cbm": total_cbm,
+                "freight_pc": freight_pc,
+                "duty_pc": duty_pc,
+                "local_pc": local_pc,
+                "landed_pc": landed_pc,
+                "total_cost": total_landed
+            })
+
+        if not sim_rows:
+            return
+
+        sim_rows.sort(key=lambda x: x["landed_pc"])
+        best_landed = sim_rows[0]["landed_pc"]
+
+        for r in sim_rows:
+            tag = ""
+            if abs(r["landed_pc"] - best_landed) < 1e-7:
+                tag = "winner"
+                
+            self.sim_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    r["supplier"],
+                    r["product"],
+                    f"${r['unit_fob']:.5f}" if r["unit_fob"] < 0.1 else f"${r['unit_fob']:.2f}",
+                    f"{r['est_cbm']:.2f} m³",
+                    f"${r['freight_pc']:.4f}",
+                    f"${r['duty_pc']:.4f}",
+                    f"${r['local_pc']:.4f}",
+                    f"${r['landed_pc']:.4f}",
+                    f"${r['total_cost']:.2f}"
+                ),
+                tags=(tag,)
+            )
 
 if __name__ == "__main__":
     app = App()
