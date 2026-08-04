@@ -345,6 +345,7 @@ class App(ctk.CTk):
         self.tabview.add("📦 Landed Cost Simulator")
         self.tabview.add("🎯 Purchase Optimizer")
         self.tabview.add("📝 RFQ Generator")
+        self.tabview.add("💰 Profit Simulator")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -486,6 +487,9 @@ class App(ctk.CTk):
 
         # Setup RFQ Generator tab
         self.setup_rfq_generator_tab()
+
+        # Setup Profit Simulator tab
+        self.setup_profit_simulator_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -1005,6 +1009,8 @@ class App(ctk.CTk):
             self.update_purchase_optimizer_tab()
         if hasattr(self, 'rfq_product_cb'):
             self.update_rfq_generator_tab()
+        if hasattr(self, 'profit_tree'):
+            self.update_profit_simulator_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -4569,6 +4575,234 @@ class App(ctk.CTk):
             messagebox.showinfo("Success", f"RFQ PDF saved successfully at:\n{file_path}!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate RFQ PDF: {e}")
+
+    def setup_profit_simulator_tab(self):
+        tab_prof = self.tabview.tab("💰 Profit Simulator")
+        tab_prof.grid_columnconfigure(0, weight=1)
+        tab_prof.grid_columnconfigure(1, weight=3)
+        tab_prof.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_prof, text="Profit Margin, ROI & Retail Pricing Simulator", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Revenue & Operating Cost Inputs ---
+        left_frame = ctk.CTkFrame(tab_prof)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left_frame, text="⚙ Price & Cost Inputs", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
+
+        # Retail Price per piece
+        ctk.CTkLabel(left_frame, text="Target Retail Price ($/pc):", font=ctk.CTkFont(size=12)).pack(pady=(5, 0), padx=15, anchor="w")
+        self.prof_retail_entry = ctk.CTkEntry(left_frame)
+        self.prof_retail_entry.pack(pady=2, padx=15, fill="x")
+        self.prof_retail_entry.insert(0, "1.50")
+
+        # Fulfillment/Warehouse Cost per piece
+        ctk.CTkLabel(left_frame, text="Warehouse/Fulfillment Fee ($/pc):", font=ctk.CTkFont(size=12)).pack(pady=(10, 0), padx=15, anchor="w")
+        self.prof_fba_entry = ctk.CTkEntry(left_frame)
+        self.prof_fba_entry.pack(pady=2, padx=15, fill="x")
+        self.prof_fba_entry.insert(0, "0.30")
+
+        # Marketing Cost per piece
+        ctk.CTkLabel(left_frame, text="Marketing/CAC Cost ($/pc):", font=ctk.CTkFont(size=12)).pack(pady=(10, 0), padx=15, anchor="w")
+        self.prof_mkt_entry = ctk.CTkEntry(left_frame)
+        self.prof_mkt_entry.pack(pady=2, padx=15, fill="x")
+        self.prof_mkt_entry.insert(0, "0.15")
+
+        # Other OPEX / Overhead per piece
+        ctk.CTkLabel(left_frame, text="Other Overhead/OPEX ($/pc):", font=ctk.CTkFont(size=12)).pack(pady=(10, 0), padx=15, anchor="w")
+        self.prof_opex_entry = ctk.CTkEntry(left_frame)
+        self.prof_opex_entry.pack(pady=2, padx=15, fill="x")
+        self.prof_opex_entry.insert(0, "0.05")
+
+        # Calculate Button
+        self.btn_calc_prof = ctk.CTkButton(left_frame, text="💰 Run Profit Analysis", fg_color="#1f538d", hover_color="#153e6b", command=self.update_profit_simulator_tab)
+        self.btn_calc_prof.pack(pady=25, padx=15, fill="x")
+
+        # --- RIGHT PANEL: Profitability Comparison Treeview ---
+        right_frame = ctk.CTkFrame(tab_prof)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📊 Profitability Comparison Matrix", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        cols = ("supplier", "product", "landed", "operating", "total_cost", "net_profit", "gross_margin", "net_margin", "roi")
+        
+        scroll_y = ttk.Scrollbar(right_frame, orient="vertical")
+        scroll_x = ttk.Scrollbar(right_frame, orient="horizontal")
+        
+        self.profit_tree = ttk.Treeview(
+            right_frame,
+            columns=cols,
+            show="headings",
+            yscrollcommand=scroll_y.set,
+            xscrollcommand=scroll_x.set
+        )
+        
+        scroll_y.config(command=self.profit_tree.yview)
+        scroll_x.config(command=self.profit_tree.xview)
+        
+        scroll_y.grid(row=1, column=1, sticky="ns")
+        scroll_x.grid(row=2, column=0, sticky="ew")
+        self.profit_tree.grid(row=1, column=0, sticky="nsew", padx=(15, 0))
+
+        # Headings
+        self.profit_tree.heading("supplier", text="Supplier")
+        self.profit_tree.heading("product", text="Product")
+        self.profit_tree.heading("landed", text="Landed ($)")
+        self.profit_tree.heading("operating", text="Opex ($)")
+        self.profit_tree.heading("total_cost", text="Total Cost ($)")
+        self.profit_tree.heading("net_profit", text="Net Profit ($)")
+        self.profit_tree.heading("gross_margin", text="Gross Margin")
+        self.profit_tree.heading("net_margin", text="Net Margin")
+        self.profit_tree.heading("roi", text="ROI (%)")
+
+        # Widths
+        self.profit_tree.column("supplier", width=130, anchor="w")
+        self.profit_tree.column("product", width=110, anchor="w")
+        self.profit_tree.column("landed", width=75, anchor="center")
+        self.profit_tree.column("operating", width=75, anchor="center")
+        self.profit_tree.column("total_cost", width=85, anchor="center")
+        self.profit_tree.column("net_profit", width=95, anchor="center")
+        self.profit_tree.column("gross_margin", width=90, anchor="center")
+        self.profit_tree.column("net_margin", width=90, anchor="center")
+        self.profit_tree.column("roi", width=80, anchor="center")
+
+        self.profit_tree.tag_configure("winner", background="#1e4620", foreground="white")
+
+    def update_profit_simulator_tab(self):
+        for item in self.profit_tree.get_children():
+            self.profit_tree.delete(item)
+
+        if not self.extracted_data:
+            return
+
+        try:
+            retail_price = float(self.prof_retail_entry.get().replace(",", "").strip())
+        except Exception:
+            retail_price = 1.50
+        try:
+            warehouse_fee = float(self.prof_fba_entry.get().replace(",", "").strip())
+        except Exception:
+            warehouse_fee = 0.30
+        try:
+            marketing_fee = float(self.prof_mkt_entry.get().replace(",", "").strip())
+        except Exception:
+            marketing_fee = 0.15
+        try:
+            opex_fee = float(self.prof_opex_entry.get().replace(",", "").strip())
+        except Exception:
+            opex_fee = 0.05
+
+        order_qty = 100000
+        freight_rate = 120.0
+        duty_percent = 6.5
+        local_flat = 350.0
+        freight_mode = "LCL (per CBM)"
+        
+        if hasattr(self, 'sim_qty_entry'):
+            try:
+                order_qty = int(self.sim_qty_entry.get().replace(",", "").strip())
+            except Exception: pass
+        if hasattr(self, 'sim_rate_entry'):
+            try:
+                freight_rate = float(self.sim_rate_entry.get().replace(",", "").strip())
+            except Exception: pass
+        if hasattr(self, 'sim_duty_slider'):
+            try:
+                duty_percent = self.sim_duty_slider.get()
+            except Exception: pass
+        if hasattr(self, 'sim_local_entry'):
+            try:
+                local_flat = float(self.sim_local_entry.get().replace(",", "").strip())
+            except Exception: pass
+        if hasattr(self, 'sim_freight_mode'):
+            try:
+                freight_mode = self.sim_freight_mode.get()
+            except Exception: pass
+
+        rows = []
+        for r in self.extracted_data:
+            fob = r.get("price")
+            if fob is None or fob == "N/A":
+                continue
+                
+            supplier = self.clean_supplier_name(r.get("supplier"))
+            product = r.get("product") or "Product"
+            packing = r.get("packing") or "N/A"
+            
+            pcs_per_ctn, unit_cbm = self.parse_packing_metrics(packing)
+            
+            import math
+            total_ctns = math.ceil(order_qty / pcs_per_ctn)
+            total_cbm = total_ctns * unit_cbm
+            total_fob = order_qty * fob
+            
+            if freight_mode == "LCL (per CBM)":
+                total_freight = total_cbm * freight_rate
+            elif freight_mode == "FCL 20GP":
+                containers = math.ceil(total_cbm / 28.0)
+                total_freight = containers * freight_rate
+            else:
+                containers = math.ceil(total_cbm / 68.0)
+                total_freight = containers * freight_rate
+                
+            total_duty = total_fob * (duty_percent / 100.0)
+            total_local = local_flat
+            
+            total_landed = total_fob + total_freight + total_duty + total_local
+            landed_pc = total_landed / order_qty
+            
+            opex_total_pc = warehouse_fee + marketing_fee + opex_fee
+            unit_total_cost = landed_pc + opex_total_pc
+            net_profit = retail_price - unit_total_cost
+            
+            gross_margin = ((retail_price - landed_pc) / retail_price) * 100.0 if retail_price > 0 else 0.0
+            net_margin = (net_profit / retail_price) * 100.0 if retail_price > 0 else 0.0
+            roi = (net_profit / landed_pc) * 100.0 if landed_pc > 0 else 0.0
+            
+            rows.append({
+                "supplier": supplier,
+                "product": product,
+                "landed": landed_pc,
+                "opex": opex_total_pc,
+                "total_cost": unit_total_cost,
+                "net_profit": net_profit,
+                "gross_margin": gross_margin,
+                "net_margin": net_margin,
+                "roi": roi
+            })
+
+        if not rows:
+            return
+
+        rows.sort(key=lambda x: x["net_profit"], reverse=True)
+        best_profit = rows[0]["net_profit"]
+
+        for r in rows:
+            tag = ""
+            if abs(r["net_profit"] - best_profit) < 1e-7:
+                tag = "winner"
+                
+            self.profit_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    r["supplier"],
+                    r["product"],
+                    f"${r['landed']:.4f}",
+                    f"${r['opex']:.2f}",
+                    f"${r['total_cost']:.4f}",
+                    f"${r['net_profit']:.4f}",
+                    f"{r['gross_margin']:.1f}%",
+                    f"{r['net_margin']:.1f}%",
+                    f"{r['roi']:.1f}%"
+                ),
+                tags=(tag,)
+            )
 
 if __name__ == "__main__":
     app = App()
