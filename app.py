@@ -5731,7 +5731,7 @@ AI TARIFF & COMPLIANCE DETAIL:
 
         ax.set_thetagrids(np.degrees(angles[:-1]), labels, color='white', fontsize=8)
         ax.set_ylim(0, 100)
-        ax.set_rgrids([25, 50, 75, 100], angle=0, colors='grey', size=7)
+        ax.set_rgrids([25, 50, 75, 100], angle=0)
         ax.tick_params(colors='white')
         
         ax.spines['polar'].set_visible(False)
