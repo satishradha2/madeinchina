@@ -189,6 +189,54 @@ def init_db():
 
 class App(ctk.CTk):
     def generate_with_fallback(self, content_list, prompt, json_response=True):
+        if hasattr(self, 'api_provider') and self.api_provider == "Custom OpenAI/Luna":
+            import urllib.request
+            import json
+            import base64
+            try:
+                url = f"{self.custom_base_url.rstrip('/')}/chat/completions"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}"
+                }
+                
+                content_payload = []
+                for item in content_list:
+                    if isinstance(item, dict) and "data" in item:
+                        mime = item.get("mime_type", "image/jpeg")
+                        b64_data = base64.b64encode(item["data"]).decode('utf-8')
+                        content_payload.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime};base64,{b64_data}"
+                            }
+                        })
+                    else:
+                        content_payload.append({
+                            "type": "text",
+                            "text": str(item)
+                        })
+                        
+                if prompt:
+                    content_payload.append({
+                        "type": "text",
+                        "text": prompt
+                    })
+                    
+                payload = {
+                    "model": self.custom_model,
+                    "messages": [{"role": "user", "content": content_payload}]
+                }
+                if json_response:
+                    payload["response_format"] = {"type": "json_object"}
+                    
+                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    res_data = json.loads(response.read().decode())
+                    return res_data["choices"][0]["message"]["content"]
+            except Exception as e:
+                raise Exception(f"Custom OpenAI/Luna API failed: {e}")
+
         models_to_try = [
             'gemini-3.1-flash-lite',
             'gemini-3.5-flash-lite',
@@ -197,7 +245,6 @@ class App(ctk.CTk):
             'gemini-2.0-flash'
         ]
         
-        # Caching optimization: Try the last successful model first!
         if hasattr(self, 'last_working_model') and self.last_working_model in models_to_try:
             models_to_try.remove(self.last_working_model)
             models_to_try.insert(0, self.last_working_model)
@@ -263,6 +310,9 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.api_key = ""
+        self.api_provider = "Google Gemini"
+        self.custom_base_url = "https://api.openai.com/v1"
+        self.custom_model = "gpt-5.6-luna"
         self.selected_folder = ""
         self.files_list = []
         self.extracted_data = [] # List of dicts
@@ -304,6 +354,13 @@ class App(ctk.CTk):
         self.settings_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
         self.settings_frame.pack(pady=5, padx=10, fill="x")
 
+        self.provider_lbl = ctk.CTkLabel(self.settings_frame, text="API Provider:", anchor="w")
+        self.provider_lbl.pack(fill="x")
+        
+        self.provider_cb = ctk.CTkComboBox(self.settings_frame, values=["Google Gemini", "Custom OpenAI/Luna"], command=self.on_provider_changed)
+        self.provider_cb.pack(fill="x", pady=2)
+        self.provider_cb.set("Google Gemini")
+
         self.api_lbl = ctk.CTkLabel(self.settings_frame, text="Gemini API Key:", anchor="w")
         self.api_lbl.pack(fill="x")
         
@@ -311,6 +368,21 @@ class App(ctk.CTk):
         self.api_entry.pack(fill="x", pady=2)
         if self.api_key:
             self.api_entry.insert(0, self.api_key)
+
+        # Custom API inputs
+        self.custom_api_frame = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
+        
+        self.base_url_lbl = ctk.CTkLabel(self.custom_api_frame, text="Base URL:", anchor="w")
+        self.base_url_lbl.pack(fill="x")
+        self.base_url_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="https://api.openai.com/v1")
+        self.base_url_entry.pack(fill="x", pady=2)
+        self.base_url_entry.insert(0, "https://api.openai.com/v1")
+        
+        self.model_lbl = ctk.CTkLabel(self.custom_api_frame, text="Model Name:", anchor="w")
+        self.model_lbl.pack(fill="x")
+        self.model_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="gpt-5.6-luna")
+        self.model_entry.pack(fill="x", pady=2)
+        self.model_entry.insert(0, "gpt-5.6-luna")
 
         self.btn_save_api = ctk.CTkButton(self.settings_frame, text="Save & Test Key", command=self.save_and_test_key, height=26)
         self.btn_save_api.pack(pady=5, fill="x")
@@ -1599,15 +1671,32 @@ class App(ctk.CTk):
 
     # --- Config Management ---
     def load_config(self):
+        self.api_provider = "Google Gemini"
+        self.custom_base_url = "https://api.openai.com/v1"
+        self.custom_model = "gpt-5.6-luna"
+        
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     config = json.load(f)
                     self.api_key = config.get("api_key", "")
                     self.selected_folder = config.get("last_folder", "")
+                    self.api_provider = config.get("api_provider", "Google Gemini")
+                    self.custom_base_url = config.get("custom_base_url", "https://api.openai.com/v1")
+                    self.custom_model = config.get("custom_model", "gpt-5.6-luna")
             except Exception:
                 pass
         
+        if hasattr(self, 'provider_cb'):
+            self.provider_cb.set(self.api_provider)
+            self.on_provider_changed(self.api_provider)
+        if hasattr(self, 'base_url_entry'):
+            self.base_url_entry.delete(0, tk.END)
+            self.base_url_entry.insert(0, self.custom_base_url)
+        if hasattr(self, 'model_entry'):
+            self.model_entry.delete(0, tk.END)
+            self.model_entry.insert(0, self.custom_model)
+
         if self.selected_folder:
             self.folder_entry.delete(0, tk.END)
             self.folder_entry.insert(0, self.selected_folder)
@@ -1617,7 +1706,10 @@ class App(ctk.CTk):
     def save_config(self):
         config = {
             "api_key": self.api_key,
-            "last_folder": self.selected_folder
+            "last_folder": self.selected_folder,
+            "api_provider": self.provider_cb.get(),
+            "custom_base_url": self.base_url_entry.get().strip(),
+            "custom_model": self.model_entry.get().strip()
         }
         try:
             with open(CONFIG_FILE, "w") as f:
@@ -1632,6 +1724,9 @@ class App(ctk.CTk):
             return
         
         self.api_key = key
+        self.api_provider = self.provider_cb.get()
+        self.custom_base_url = self.base_url_entry.get().strip()
+        self.custom_model = self.model_entry.get().strip()
         self.save_config()
 
         threading.Thread(target=self.async_test_key, daemon=True).start()
@@ -1640,10 +1735,18 @@ class App(ctk.CTk):
         try:
             self.generate_with_fallback([], "Ping", json_response=False)
             self.api_entry.configure(fg_color="#1f5a34")
-            messagebox.showinfo("Success", "Gemini API Key is valid and working!")
+            messagebox.showinfo("Success", f"{self.api_provider} API Key is valid and working!")
         except Exception as e:
             self.api_entry.configure(fg_color="#5a1f1f")
-            messagebox.showerror("Error", f"Failed to connect to Gemini API:\n{e}")
+            messagebox.showerror("Error", f"Failed to connect to API:\n{e}")
+
+    def on_provider_changed(self, choice):
+        if choice == "Custom OpenAI/Luna":
+            self.custom_api_frame.pack(fill="x", pady=5)
+            self.api_lbl.configure(text="Custom API Key:")
+        else:
+            self.custom_api_frame.pack_forget()
+            self.api_lbl.configure(text="Gemini API Key:")
 
     # --- Folder Logic ---
     def select_folder(self):
