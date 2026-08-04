@@ -398,6 +398,7 @@ class App(ctk.CTk):
         self.matrix_tab = self.sourcing_tabview.add("🧮 Sourcing Matrix")
         tab_charts = self.sourcing_tabview.add("📈 Visual Charts")
         tab_insights = self.sourcing_tabview.add("💡 AI Sourcing Insights")
+        tab_hedge = self.sourcing_tabview.add("💵 Currency Hedging")
 
         # Split frame layout inside Quotes Comparison tab
         tab_comp.grid_columnconfigure(0, weight=0, minsize=260)
@@ -462,6 +463,7 @@ class App(ctk.CTk):
         
         tab_scorecard = self.scorecard_tabview.add("🏆 Supplier Scorecard")
         tab_qc = self.scorecard_tabview.add("🏢 Factory Audit & QC")
+        tab_incidents = self.scorecard_tabview.add("⚠️ Defect Log")
 
         # ---------------------------------------------
         # 3. Workspace: Logistics & Costing
@@ -474,6 +476,7 @@ class App(ctk.CTk):
         tab_packing = self.logistics_tabview.add("🚢 Container Packing")
         tab_timeline = self.logistics_tabview.add("📅 Gantt Timeline")
         tab_prof = self.logistics_tabview.add("💰 Profit Simulator")
+        tab_po = self.logistics_tabview.add("📄 PO Generator")
 
         # ---------------------------------------------
         # 4. Workspace: RFQs & Outreach
@@ -709,6 +712,15 @@ class App(ctk.CTk):
 
         # Setup Container Packing tab
         self.setup_container_packing_tab()
+
+        # Setup Currency Hedging tab
+        self.setup_currency_hedging_tab()
+
+        # Setup Defect Log tab
+        self.setup_defect_log_tab()
+
+        # Setup PO Generator tab
+        self.setup_po_generator_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -3496,6 +3508,26 @@ class App(ctk.CTk):
                 risk_score = 100.0
             else:
                 risk_score = 50.0
+
+            # Query incidents database for this supplier and deduct penalties
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("SELECT severity FROM supplier_incidents WHERE supplier = ?", (self.clean_supplier_name(supplier),))
+                incidents = c.fetchall()
+                conn.close()
+                
+                penalty = 0
+                for inc_row in incidents:
+                    sev = str(inc_row[0]).lower()
+                    if "high" in sev:
+                        penalty += 15
+                    elif "medium" in sev:
+                        penalty += 5
+                
+                risk_score = max(0.0, risk_score - penalty)
+            except Exception as e:
+                print(f"Failed to query incidents penalty for scorecard: {e}")
                 
             # Weighted average
             total_w = self.weight_price + self.weight_lead + self.weight_moq + self.weight_risk
@@ -4767,39 +4799,45 @@ class App(ctk.CTk):
         self.rfq_name_entry = ctk.CTkEntry(left_frame)
         self.rfq_name_entry.grid(row=2, column=1, padx=15, pady=2, sticky="ew")
 
+        # Industry Template Dropdown
+        ctk.CTkLabel(left_frame, text="Industry Template:").grid(row=3, column=0, padx=15, pady=2, sticky="w")
+        self.rfq_template_cb = ctk.CTkComboBox(left_frame, values=["Custom / None", "Medical PPE", "Consumer Electronics", "Apparel & Fabrics", "Industrial Packaging"], command=self.on_rfq_template_changed)
+        self.rfq_template_cb.grid(row=3, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_template_cb.set("Custom / None")
+
         # Target Qty
-        ctk.CTkLabel(left_frame, text="Target Quantity (pcs):").grid(row=3, column=0, padx=15, pady=2, sticky="w")
+        ctk.CTkLabel(left_frame, text="Target Quantity (pcs):").grid(row=4, column=0, padx=15, pady=2, sticky="w")
         self.rfq_qty_entry = ctk.CTkEntry(left_frame)
-        self.rfq_qty_entry.grid(row=3, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_qty_entry.grid(row=4, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_qty_entry.insert(0, "100000")
 
         # Target Price Term
-        ctk.CTkLabel(left_frame, text="Price Terms (FOB/EXW):").grid(row=4, column=0, padx=15, pady=2, sticky="w")
+        ctk.CTkLabel(left_frame, text="Price Terms (FOB/EXW):").grid(row=5, column=0, padx=15, pady=2, sticky="w")
         self.rfq_term_cb = ctk.CTkComboBox(left_frame, values=["FOB Wuhan", "FOB Shanghai", "FOB Ningbo", "EXW", "CIF", "DDP"])
-        self.rfq_term_cb.grid(row=4, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_term_cb.grid(row=5, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_term_cb.set("FOB Shanghai")
 
         # Lead Time
-        ctk.CTkLabel(left_frame, text="Target Lead Time:").grid(row=5, column=0, padx=15, pady=2, sticky="w")
+        ctk.CTkLabel(left_frame, text="Target Lead Time:").grid(row=6, column=0, padx=15, pady=2, sticky="w")
         self.rfq_lead_entry = ctk.CTkEntry(left_frame)
-        self.rfq_lead_entry.grid(row=5, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_lead_entry.grid(row=6, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_lead_entry.insert(0, "30 days")
 
         # Payment Term
-        ctk.CTkLabel(left_frame, text="Payment Terms:").grid(row=6, column=0, padx=15, pady=2, sticky="w")
+        ctk.CTkLabel(left_frame, text="Payment Terms:").grid(row=7, column=0, padx=15, pady=2, sticky="w")
         self.rfq_payment_entry = ctk.CTkEntry(left_frame)
-        self.rfq_payment_entry.grid(row=6, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_payment_entry.grid(row=7, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_payment_entry.insert(0, "30% Deposit, 70% Balance against B/L")
 
         # Specs Label
-        ctk.CTkLabel(left_frame, text="Product Specifications:").grid(row=7, column=0, padx=15, pady=5, sticky="w")
+        ctk.CTkLabel(left_frame, text="Product Specifications:").grid(row=8, column=0, padx=15, pady=5, sticky="w")
         
         btn_spec_helper = ctk.CTkButton(left_frame, text="✍ Refine Specs with AI", fg_color="#6e4513", hover_color="#52320b", font=ctk.CTkFont(size=11), command=self.refine_rfq_specs_with_ai)
-        btn_spec_helper.grid(row=7, column=1, padx=15, pady=5, sticky="e")
+        btn_spec_helper.grid(row=8, column=1, padx=15, pady=5, sticky="e")
 
         # Text specs field
         self.rfq_specs_text = ctk.CTkTextbox(left_frame, height=130)
-        self.rfq_specs_text.grid(row=8, column=0, columnspan=2, padx=15, pady=(2, 15), sticky="nsew")
+        self.rfq_specs_text.grid(row=9, column=0, columnspan=2, padx=15, pady=(2, 15), sticky="nsew")
 
         # --- RIGHT PANEL: Actions & Preview ---
         right_frame = ctk.CTkFrame(tab_rfq)
@@ -5809,8 +5847,14 @@ class App(ctk.CTk):
         self.uae_cif_entry.grid(row=3, column=1, padx=15, pady=5, sticky="ew")
         self.uae_cif_entry.insert(0, "15000")
 
+        # Country of Origin Dropdown for FTA CEPA Exemption Checker
+        ctk.CTkLabel(left_frame, text="Country of Origin:").grid(row=4, column=0, padx=15, pady=5, sticky="w")
+        self.uae_origin_cb = ctk.CTkComboBox(left_frame, values=["China", "India", "GCC (Saudi/Oman/etc)", "USA", "Europe"])
+        self.uae_origin_cb.grid(row=4, column=1, padx=15, pady=5, sticky="ew")
+        self.uae_origin_cb.set("India")
+
         self.btn_classify_uae = ctk.CTkButton(left_frame, text="🔍 Classify HS Code & Duties", fg_color="#1f538d", hover_color="#153e6b", command=self.run_uae_customs_evaluation)
-        self.btn_classify_uae.grid(row=4, column=0, columnspan=2, padx=15, pady=25, sticky="ew")
+        self.btn_classify_uae.grid(row=5, column=0, columnspan=2, padx=15, pady=25, sticky="ew")
 
         # --- RIGHT PANEL: AI Customs Analysis Summary ---
         right_frame = ctk.CTkFrame(tab_uae)
@@ -5875,8 +5919,15 @@ class App(ctk.CTk):
             try:
                 result_text = self.generate_with_fallback([], ai_prompt, json_response=False)
                 
+                origin = self.uae_origin_cb.get()
                 cif_aed = cif_val * 3.6725
                 duty_rate = 0.05
+                is_fta = False
+                
+                if origin in ["India", "GCC (Saudi/Oman/etc)"]:
+                    duty_rate = 0.0
+                    is_fta = True
+                
                 excise_rate = 0.0
                 if any(x in prod_name.lower() for x in ["drink", "tobacco", "cigarette", "sugar"]):
                     excise_rate = 0.50
@@ -5886,14 +5937,19 @@ class App(ctk.CTk):
                 est_vat_aed = (cif_aed + est_duty_aed + est_excise_aed) * 0.05
                 total_cleared_aed = cif_aed + est_duty_aed + est_excise_aed + est_vat_aed
 
+                fta_banner = ""
+                if is_fta:
+                    fta_banner = f"★ FTA CEPA BENEFIT ACTIVE: 0.0% Preferential Duty (Origin: {origin})\n--------------------------------------------------\n"
+
                 summary_header = f"""==================================================
 🇦🇪 UAE CUSTOMS IMPORT CLEARANCE PROJECTION
 ==================================================
 Target Product : {prod_name}
+Country of Origin: {origin}
 CIF Import Value: ${cif_val:,.2f} USD ({cif_aed:,.2f} AED)
 --------------------------------------------------
-ESTIMATED CLEARANCE COST BREAKDOWN:
-- Standard GCC Customs Duty (5%) : {est_duty_aed:,.2f} AED
+{fta_banner}ESTIMATED CLEARANCE COST BREAKDOWN:
+- GCC Customs Duty ({int(duty_rate*100)}%)    : {est_duty_aed:,.2f} AED
 - Estimated Excise Tax           : {est_excise_aed:,.2f} AED
 - Estimated UAE Import VAT (5%)  : {est_vat_aed:,.2f} AED
 - Total Landed Cost (In UAE)     : {total_cleared_aed:,.2f} AED
@@ -6342,6 +6398,606 @@ Sourcing Action Guidance:
             self.load_all_quotes_from_db()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to log incident: {e}")
+
+            self.qc_inc_desc_entry.delete(0, tk.END)
+            messagebox.showinfo("Success", f"Operational incident ({inc_type} - {severity}) logged for {supplier}!")
+            self.load_all_quotes_from_db()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to log incident: {e}")
+
+    def setup_defect_log_tab(self):
+        tab_incidents = self.scorecard_tabview.tab("⚠️ Defect Log")
+        tab_incidents.grid_columnconfigure(0, weight=1)
+        tab_incidents.grid_columnconfigure(1, weight=2)
+        tab_incidents.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_incidents, text="Supplier Defect & Quality Incident Log", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Add Incident Form ---
+        left_frame = ctk.CTkFrame(tab_incidents)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left_frame, text="🚨 Log New Incident", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Select Supplier:").pack(padx=15, pady=(5, 2), anchor="w")
+        self.inc_supplier_cb = ctk.CTkComboBox(left_frame, values=["Select Supplier"], width=230)
+        self.inc_supplier_cb.pack(padx=15, pady=2, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Incident Type:").pack(padx=15, pady=(5, 2), anchor="w")
+        self.inc_type_cb = ctk.CTkComboBox(left_frame, values=["Defect Rate", "Delivery Delay", "Communication Delay", "Other Dispute"], width=230)
+        self.inc_type_cb.pack(padx=15, pady=2, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Severity Level:").pack(padx=15, pady=(5, 2), anchor="w")
+        self.inc_sev_cb = ctk.CTkComboBox(left_frame, values=["Low", "Medium", "High"], width=230)
+        self.inc_sev_cb.pack(padx=15, pady=2, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Description:").pack(padx=15, pady=(5, 2), anchor="w")
+        self.inc_desc_entry = ctk.CTkEntry(left_frame, placeholder_text="Details of quality issue...", width=230)
+        self.inc_desc_entry.pack(padx=15, pady=2, anchor="w")
+
+        btn_log = ctk.CTkButton(left_frame, text="🚨 Log Incident", fg_color="#bf3b3b", hover_color="#9e2d2d", command=self.add_incident_log)
+        btn_log.pack(padx=15, pady=15, fill="x")
+
+        # --- RIGHT PANEL: Incidents History Table ---
+        right_frame = ctk.CTkFrame(tab_incidents)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(0, weight=1)
+
+        scroll_y = ttk.Scrollbar(right_frame, orient="vertical")
+        cols = ("id", "supplier", "type", "description", "severity", "date")
+        self.inc_tree = ttk.Treeview(right_frame, columns=cols, show="headings", yscrollcommand=scroll_y.set, style="Treeview")
+        scroll_y.config(command=self.inc_tree.yview)
+
+        self.inc_tree.heading("id", text="ID")
+        self.inc_tree.heading("supplier", text="Supplier")
+        self.inc_tree.heading("type", text="Type")
+        self.inc_tree.heading("description", text="Description")
+        self.inc_tree.heading("severity", text="Severity")
+        self.inc_tree.heading("date", text="Date")
+
+        self.inc_tree.column("id", width=40, anchor="center")
+        self.inc_tree.column("supplier", width=120, anchor="w")
+        self.inc_tree.column("type", width=100, anchor="w")
+        self.inc_tree.column("description", width=200, anchor="w")
+        self.inc_tree.column("severity", width=80, anchor="center")
+        self.inc_tree.column("date", width=120, anchor="center")
+
+        self.inc_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
+        scroll_y.grid(row=0, column=1, sticky="ns", pady=10, padx=(0, 10))
+
+        btn_delete = ctk.CTkButton(right_frame, text="🗑 Delete Selected Log", fg_color="#a83232", hover_color="#8c2626", command=self.delete_incident_log)
+        btn_delete.grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+
+        self.load_incident_logs()
+
+    def load_incident_logs(self):
+        # Update dropdown values first
+        suppliers = set()
+        for r in self.extracted_data:
+            s = self.clean_supplier_name(r.get("supplier"))
+            if s and s != "Unknown":
+                suppliers.add(s)
+        sorted_sups = sorted(list(suppliers))
+        if hasattr(self, 'inc_supplier_cb'):
+            self.inc_supplier_cb.configure(values=sorted_sups)
+            if sorted_sups:
+                self.inc_supplier_cb.set(sorted_sups[0])
+
+        self.inc_tree.delete(*self.inc_tree.get_children())
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT id, supplier, incident_type, description, severity, logged_date FROM supplier_incidents ORDER BY logged_date DESC")
+            for row in c.fetchall():
+                self.inc_tree.insert("", "end", values=row)
+            conn.close()
+        except Exception as e:
+            print(f"Failed to load incident logs: {e}")
+
+    def add_incident_log(self):
+        supplier = self.inc_supplier_cb.get()
+        inc_type = self.inc_type_cb.get()
+        severity = self.inc_sev_cb.get()
+        desc = self.inc_desc_entry.get().strip()
+
+        if not supplier or supplier == "Select Supplier":
+            messagebox.showwarning("Warning", "Please select a supplier first!")
+            return
+        if not desc:
+            messagebox.showwarning("Warning", "Please enter an incident description!")
+            return
+
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO supplier_incidents (supplier, incident_type, description, severity)
+                VALUES (?, ?, ?, ?)
+            """, (supplier, inc_type, desc, severity))
+            conn.commit()
+            conn.close()
+
+            self.inc_desc_entry.delete(0, tk.END)
+            messagebox.showinfo("Success", f"Operational incident ({inc_type} - {severity}) logged for {supplier}!")
+            self.load_incident_logs()
+            self.update_scorecard_tab() # Refresh scorecard in real-time
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to log incident: {e}")
+
+    def delete_incident_log(self):
+        selected = self.inc_tree.selection()
+        if not selected:
+            messagebox.showwarning("Warning", "Please select an incident log to delete!")
+            return
+        
+        item = self.inc_tree.item(selected[0])
+        log_id = item["values"][0]
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("DELETE FROM supplier_incidents WHERE id = ?", (log_id,))
+            conn.commit()
+            conn.close()
+            messagebox.showinfo("Deleted", "Incident log deleted successfully!")
+            self.load_incident_logs()
+            self.update_scorecard_tab()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete incident log: {e}")
+
+    def setup_currency_hedging_tab(self):
+        tab_hedge = self.sourcing_tabview.tab("💵 Currency Hedging")
+        tab_hedge.grid_columnconfigure(0, weight=1)
+        tab_hedge.grid_columnconfigure(1, weight=2)
+        tab_hedge.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_hedge, text="Exchange Rate Hedging & Landed Cost Fluctuation Simulator", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Sliders & Parameter Controls ---
+        left_frame = ctk.CTkFrame(tab_hedge)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left_frame, text="💵 Fluctuation Parameters", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
+
+        # CNY Slider
+        ctk.CTkLabel(left_frame, text="CNY Exchange Rate Fluctuation (%):").pack(padx=15, pady=(5, 0), anchor="w")
+        self.cny_fluc_lbl = ctk.CTkLabel(left_frame, text="0.0% (Baseline: 7.25 CNY)", text_color="grey")
+        self.cny_fluc_lbl.pack(padx=15, pady=0, anchor="w")
+        self.cny_slider = ctk.CTkSlider(left_frame, from_=-10.0, to=10.0, command=self.on_hedge_slider_change)
+        self.cny_slider.pack(padx=15, pady=5, fill="x")
+        self.cny_slider.set(0.0)
+
+        # EUR Slider
+        ctk.CTkLabel(left_frame, text="EUR Exchange Rate Fluctuation (%):").pack(padx=15, pady=(10, 0), anchor="w")
+        self.eur_fluc_lbl = ctk.CTkLabel(left_frame, text="0.0% (Baseline: 0.92 EUR)", text_color="grey")
+        self.eur_fluc_lbl.pack(padx=15, pady=0, anchor="w")
+        self.eur_slider = ctk.CTkSlider(left_frame, from_=-10.0, to=10.0, command=self.on_hedge_slider_change)
+        self.eur_slider.pack(padx=15, pady=5, fill="x")
+        self.eur_slider.set(0.0)
+
+        # Recommendation Card
+        self.hedge_rec_card = ctk.CTkFrame(left_frame, fg_color="#1f538d")
+        self.hedge_rec_card.pack(pady=20, padx=15, fill="both", expand=True)
+        self.hedge_rec_lbl = ctk.CTkLabel(self.hedge_rec_card, text="💵 Currency Risk Analysis\nAdjust exchange rate sliders to simulate landed cost exposures.", wraplength=220, justify="left")
+        self.hedge_rec_lbl.pack(padx=15, pady=15, fill="both", expand=True)
+
+        # --- RIGHT PANEL: Visual Chart Canvas ---
+        self.hedge_display_frame = ctk.CTkFrame(tab_hedge, fg_color="#2b2b2b")
+        self.hedge_display_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        self.hedge_display_frame.grid_columnconfigure(0, weight=1)
+        self.hedge_display_frame.grid_rowconfigure(0, weight=1)
+
+        self.draw_hedge_chart()
+
+    def on_hedge_slider_change(self, value):
+        cny_val = self.cny_slider.get()
+        eur_val = self.eur_slider.get()
+        self.cny_fluc_lbl.configure(text=f"{cny_val:+.1f}% (Current: {7.25 * (1 + cny_val/100):.3f} CNY)")
+        self.eur_fluc_lbl.configure(text=f"{eur_val:+.1f}% (Current: {0.92 * (1 + eur_val/100):.3f} EUR)")
+        self.draw_hedge_chart()
+
+    def draw_hedge_chart(self):
+        for w in self.hedge_display_frame.winfo_children():
+            w.destroy()
+
+        if not self.extracted_data:
+            ctk.CTkLabel(self.hedge_display_frame, text="No supplier quotes available in database to simulate.", text_color="grey").pack(pady=50)
+            return
+
+        cny_fluc = self.cny_slider.get() if hasattr(self, 'cny_slider') else 0.0
+        eur_fluc = self.eur_slider.get() if hasattr(self, 'eur_slider') else 0.0
+
+        # Select top 4 quotes with unit prices
+        valid_quotes = []
+        for q in self.extracted_data:
+            try:
+                if q["price"] is not None:
+                    valid_quotes.append(q)
+            except Exception:
+                pass
+        
+        if not valid_quotes:
+            ctk.CTkLabel(self.hedge_display_frame, text="No valid numeric quote prices to simulate.", text_color="grey").pack(pady=50)
+            return
+
+        # Sort and take top 4
+        valid_quotes = sorted(valid_quotes, key=lambda x: float(x["price"] or 0))[:4]
+
+        suppliers = []
+        baseline_ddps = []
+        simulated_ddps = []
+
+        for q in valid_quotes:
+            supplier_clean = self.clean_supplier_name(q.get("supplier"))
+            product_clean = self.clean_product_name(q.get("product"))
+            name = f"{supplier_clean}\n({product_clean})"
+            
+            unit_price_usd = float(q["price"])
+            term = (q.get("term") or "").upper()
+            
+            # Simple DDP estimation
+            baseline_ddp = unit_price_usd
+            if "FOB" in term:
+                baseline_ddp *= 1.15
+            elif "EXW" in term:
+                baseline_ddp *= 1.20
+            else:
+                baseline_ddp *= 1.05
+
+            sim_ddp = baseline_ddp
+            if "CNY" in term or any(tok in name.lower() for tok in ["anji", "xiantao", "juxian", "chen", "hefei", "guang"]):
+                sim_ddp = baseline_ddp * (1 + cny_fluc / 100.0)
+            elif "EUR" in term:
+                sim_ddp = baseline_ddp * (1 + eur_fluc / 100.0)
+
+            suppliers.append(name)
+            baseline_ddps.append(baseline_ddp)
+            simulated_ddps.append(sim_ddp)
+
+        # Plot comparison bar chart
+        fig, ax = plt.subplots(figsize=(6, 4), facecolor='#2b2b2b')
+        ax.set_facecolor('#2b2b2b')
+
+        import numpy as np
+        x = np.arange(len(suppliers))
+        width = 0.35
+
+        ax.bar(x - width/2, baseline_ddps, width, label='Baseline DDP Landed Cost', color='#1f538d')
+        ax.bar(x + width/2, simulated_ddps, width, label='Simulated Fluctuation', color='#a83232' if max(simulated_ddps) > max(baseline_ddps) else '#2da832')
+
+        ax.set_ylabel('Cost per Piece (USD)', color='white')
+        ax.set_title('Landed Cost Sensitivity to Currency Fluctuation', color='white', pad=15)
+        ax.set_xticks(x)
+        ax.set_xticklabels(suppliers, color='white', rotation=15, fontsize=8)
+        ax.tick_params(colors='white')
+        ax.legend(facecolor='#2b2b2b', edgecolor='none', labelcolor='white')
+        ax.grid(color='#4c4c4c', linestyle='--')
+
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.hedge_display_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig)
+
+        # Update recommendation message
+        max_diff = max([sim - base for sim, base in zip(simulated_ddps, baseline_ddps)])
+        if max_diff > 0.001:
+            rec_text = f"🚨 CURRENCY EXPOSURE WARNING:\nStrengthening supplier currencies increase your landed costs by up to +{(max_diff/max(baseline_ddps))*100:.1f}%. Recommend purchasing forward contract hedges or setting a {(max_diff/max(baseline_ddps))*100 + 3:.1f}% price margin buffer."
+        else:
+            rec_text = "🟢 Favorable Exchange Trend:\nSimulated currency trends lower or stabilize your landed costs. Sourcing pricing is safe."
+        self.hedge_rec_lbl.configure(text=rec_text)
+
+    def setup_po_generator_tab(self):
+        tab_po = self.logistics_tabview.tab("📄 PO Generator")
+        tab_po.grid_columnconfigure(0, weight=1)
+        tab_po.grid_columnconfigure(1, weight=1)
+        tab_po.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_po, text="Enterprise Purchase Order (PO) Generator", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: PO Field Forms ---
+        left_frame = ctk.CTkFrame(tab_po)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="📄 Purchase Order Parameters", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, pady=10, padx=15, sticky="w")
+
+        # Supplier Choice
+        ctk.CTkLabel(left_frame, text="Select Supplier:").grid(row=1, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_supplier_cb = ctk.CTkComboBox(left_frame, values=["Select Supplier"], command=self.on_po_supplier_selected)
+        self.po_supplier_cb.grid(row=1, column=1, padx=15, pady=2, sticky="ew")
+
+        # Product Choice
+        ctk.CTkLabel(left_frame, text="Select Product:").grid(row=2, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_product_cb = ctk.CTkComboBox(left_frame, values=["Select Product"], command=self.on_po_quote_selected)
+        self.po_product_cb.grid(row=2, column=1, padx=15, pady=2, sticky="ew")
+
+        # PO Number
+        ctk.CTkLabel(left_frame, text="PO Number:").grid(row=3, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_number_entry = ctk.CTkEntry(left_frame)
+        self.po_number_entry.grid(row=3, column=1, padx=15, pady=2, sticky="ew")
+        import random
+        self.po_number_entry.insert(0, f"PO-2026-{random.randint(1000, 9999)}")
+
+        # Order Qty
+        ctk.CTkLabel(left_frame, text="Order Quantity (pcs):").grid(row=4, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_qty_entry = ctk.CTkEntry(left_frame)
+        self.po_qty_entry.grid(row=4, column=1, padx=15, pady=2, sticky="ew")
+        self.po_qty_entry.insert(0, "10000")
+        self.po_qty_entry.bind("<KeyRelease>", lambda e: self.update_po_preview())
+
+        # Payment terms
+        ctk.CTkLabel(left_frame, text="Payment Terms:").grid(row=5, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_payment_entry = ctk.CTkEntry(left_frame)
+        self.po_payment_entry.grid(row=5, column=1, padx=15, pady=2, sticky="ew")
+        self.po_payment_entry.insert(0, "30% Deposit, 70% before Shipment")
+
+        # Shipping Address
+        ctk.CTkLabel(left_frame, text="Delivery Address:").grid(row=6, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_address_entry = ctk.CTkEntry(left_frame)
+        self.po_address_entry.grid(row=6, column=1, padx=15, pady=2, sticky="ew")
+        self.po_address_entry.insert(0, "ProcureAI Hub warehouse, Dubai Airport Freezone, UAE")
+
+        # Unit Cost override display
+        ctk.CTkLabel(left_frame, text="Unit Cost (USD):").grid(row=7, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.po_cost_lbl = ctk.CTkLabel(left_frame, text="$0.00", font=ctk.CTkFont(weight="bold"))
+        self.po_cost_lbl.grid(row=7, column=1, padx=15, pady=2, sticky="w")
+
+        # Generate & Export Buttons
+        self.btn_gen_po = ctk.CTkButton(left_frame, text="📄 Generate PO PDF Document", command=self.export_po_pdf, fg_color="#1f7d44", hover_color="#15592e")
+        self.btn_gen_po.grid(row=8, column=0, columnspan=2, padx=15, pady=20, sticky="ew")
+
+        # --- RIGHT PANEL: Live PO Preview text ---
+        right_frame = ctk.CTkFrame(tab_po)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📄 Live PO Document Draft", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, pady=10, padx=15, sticky="w")
+
+        self.po_preview_box = ctk.CTkTextbox(right_frame, wrap="word")
+        self.po_preview_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+
+        self.load_po_suppliers()
+
+    def load_po_suppliers(self):
+        suppliers = set()
+        for r in self.extracted_data:
+            s = self.clean_supplier_name(r.get("supplier"))
+            if s and s != "Unknown":
+                suppliers.add(s)
+        sorted_sups = sorted(list(suppliers))
+        if hasattr(self, 'po_supplier_cb'):
+            self.po_supplier_cb.configure(values=sorted_sups)
+            if sorted_sups:
+                self.po_supplier_cb.set(sorted_sups[0])
+                self.on_po_supplier_selected(sorted_sups[0])
+
+    def on_po_supplier_selected(self, choice):
+        products = set()
+        for r in self.extracted_data:
+            if self.clean_supplier_name(r.get("supplier")) == choice:
+                p = (r.get("product") or "").strip().title()
+                if p:
+                    products.add(p)
+        sorted_prods = sorted(list(products))
+        if hasattr(self, 'po_product_cb'):
+            self.po_product_cb.configure(values=sorted_prods)
+            if sorted_prods:
+                self.po_product_cb.set(sorted_prods[0])
+                self.on_po_quote_selected(sorted_prods[0])
+
+    def on_po_quote_selected(self, choice):
+        supplier = self.po_supplier_cb.get()
+        self.po_active_price = 0.0
+        self.po_active_quote = None
+        for r in self.extracted_data:
+            if self.clean_supplier_name(r.get("supplier")) == supplier and (r.get("product") or "").strip().title() == choice:
+                self.po_active_quote = r
+                try:
+                    self.po_active_price = float(r["price"])
+                except Exception:
+                    self.po_active_price = 0.0
+                break
+        self.po_cost_lbl.configure(text=f"${self.po_active_price:.5f}")
+        self.update_po_preview()
+
+    def update_po_preview(self):
+        supplier = self.po_supplier_cb.get()
+        product = self.po_product_cb.get()
+        po_num = self.po_number_entry.get().strip()
+        address = self.po_address_entry.get().strip()
+        payment = self.po_payment_entry.get().strip()
+        
+        try:
+            qty = int(self.po_qty_entry.get().strip().replace(",", ""))
+        except Exception:
+            qty = 0
+            
+        unit_price = getattr(self, 'po_active_price', 0.0)
+        total_cost = qty * unit_price
+
+        preview_text = f"""==================================================
+                 PURCHASE ORDER (DRAFT)
+==================================================
+PO NUMBER: {po_num}
+DATE: 2026-08-04
+BUYER: ProcureAI Hub Corp
+DELIVERY ADDRESS: {address}
+
+--------------------------------------------------
+SUPPLIER: {supplier}
+ITEM DESCRIPTION: {product}
+ORDER QUANTITY: {qty:,} pcs
+UNIT PRICE: ${unit_price:.5f}/pc
+DELIVERY TERMS: {self.po_active_quote.get("term") if self.po_active_quote else "FOB"}
+PAYMENT TERMS: {payment}
+
+--------------------------------------------------
+TOTAL ORDER VALUE: ${total_cost:,.2f}
+==================================================
+Authorized Signature: ___________________________
+"""
+        self.po_preview_box.configure(state="normal")
+        self.po_preview_box.delete("1.0", tk.END)
+        self.po_preview_box.insert("1.0", preview_text)
+        self.po_preview_box.configure(state="disabled")
+
+    def export_po_pdf(self):
+        supplier = self.po_supplier_cb.get()
+        product = self.po_product_cb.get()
+        po_num = self.po_number_entry.get().strip()
+        address = self.po_address_entry.get().strip()
+        payment = self.po_payment_entry.get().strip()
+        
+        try:
+            qty = int(self.po_qty_entry.get().strip().replace(",", ""))
+        except Exception:
+            messagebox.showerror("Error", "Please enter a valid numeric quantity!")
+            return
+            
+        unit_price = getattr(self, 'po_active_price', 0.0)
+        total_cost = qty * unit_price
+
+        file_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")], initialfile=f"PO_{po_num}.pdf")
+        if not file_path:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib import colors
+
+            doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            story = []
+            styles = getSampleStyleSheet()
+
+            primary_color = colors.HexColor("#1f538d")
+            text_color = colors.HexColor("#333333")
+
+            title_style = ParagraphStyle(
+                'POTitle',
+                parent=styles['Heading1'],
+                fontName='Helvetica-Bold',
+                fontSize=24,
+                textColor=primary_color,
+                spaceAfter=15
+            )
+
+            po_meta_style = ParagraphStyle(
+                'POMeta',
+                parent=styles['Normal'],
+                fontName='Helvetica',
+                fontSize=11,
+                textColor=text_color,
+                leading=14
+            )
+
+            table_header_style = ParagraphStyle(
+                'TableHeader',
+                parent=styles['Normal'],
+                fontName='Helvetica-Bold',
+                fontSize=10,
+                textColor=colors.white
+            )
+
+            table_cell_style = ParagraphStyle(
+                'TableCell',
+                parent=styles['Normal'],
+                fontName='Helvetica',
+                fontSize=10,
+                textColor=text_color
+            )
+
+            story.append(Paragraph("PURCHASE ORDER", title_style))
+            story.append(Spacer(1, 10))
+
+            meta_data = [
+                [
+                    Paragraph(f"<b>Buyer:</b> ProcureAI Hub Corp<br/><b>Delivery Address:</b><br/>{address}", po_meta_style),
+                    Paragraph(f"<b>PO Number:</b> {po_num}<br/><b>Date:</b> 2026-08-04<br/><b>Payment Terms:</b> {payment}", po_meta_style)
+                ]
+            ]
+            meta_table = Table(meta_data, colWidths=[270, 270])
+            meta_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('PADDING', (0,0), (-1,-1), 0),
+            ]))
+            story.append(meta_table)
+            story.append(Spacer(1, 20))
+
+            story.append(Paragraph(f"<b>Supplier:</b> {supplier}", po_meta_style))
+            story.append(Spacer(1, 15))
+
+            headers = [
+                Paragraph("Item Description", table_header_style),
+                Paragraph("Quantity", table_header_style),
+                Paragraph("Unit Price", table_header_style),
+                Paragraph("Total Cost", table_header_style)
+            ]
+            row1 = [
+                Paragraph(product, table_cell_style),
+                Paragraph(f"{qty:,} pcs", table_cell_style),
+                Paragraph(f"${unit_price:.5f}", table_cell_style),
+                Paragraph(f"${total_cost:,.2f}", table_cell_style)
+            ]
+            
+            table_data = [headers, row1]
+            items_table = Table(table_data, colWidths=[240, 100, 100, 100])
+            items_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), primary_color),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('PADDING', (0, 0), (-1, -1), 8),
+            ]))
+            story.append(items_table)
+            story.append(Spacer(1, 40))
+
+            sig_data = [
+                [
+                    Paragraph("<b>Prepared By:</b> ___________________________", po_meta_style),
+                    Paragraph("<b>Authorized Signature:</b> ___________________________", po_meta_style)
+                ]
+            ]
+            sig_table = Table(sig_data, colWidths=[270, 270])
+            sig_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('PADDING', (0,0), (-1,-1), 0),
+            ]))
+            story.append(sig_table)
+
+            doc.build(story)
+            messagebox.showinfo("Success", f"Purchase Order PDF saved successfully at:\n{file_path}!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate PO PDF: {e}")
+
+    def on_rfq_template_changed(self, choice):
+        specs = ""
+        if choice == "Medical PPE":
+            specs = "- Product Type: Medical Face Mask / Disposable Hairnet\\n- Conformity: CE EN14683 Type IIR / FDA Approved\\n- Material Specs: 3-ply Non-woven, Meltblown Filter layer (BFE >= 98%)\\n- Packaging: 50pcs per inner box, sterile packed\\n- Weight/Thickness: 25g + 25g + 25g GSM\\n- Dimensions: Standard adult size (17.5cm x 9.5cm)"
+        elif choice == "Consumer Electronics":
+            specs = "- Input Rating: DC 5V/2A, Type-C Charging port\\n- Battery Capacity: 2000mAh rechargeable lithium-ion\\n- Certifications: CE, RoHS, FCC Conformity\\n- Shell Material: Fire-retardant ABS + PC plastic\\n- Dynamic Testing: Drop test from 1.2m height on concrete\\n- Thermal Limits: Operational range -10°C to 45°C"
+        elif choice == "Apparel & Fabrics":
+            specs = "- Composition: 95% Organic Cotton, 5% Spandex blend\\n- Weight/Density: 180 GSM single jersey\\n- Dyeing Grade: AZO-free eco-friendly reactive dyeing\\n- Shrinkage Limit: Less than 3% after 5 washes\\n- Stitching Detail: Double-needle flatlock hems\\n- Elasticity: High resilience double elastic banding"
+        elif choice == "Industrial Packaging":
+            specs = "- Material Grade: Double-wall corrugated Kraft paper (K=K)\\n- Bursting Strength: Min 14 kg/cm²\\n- Water Resistance: Cobra test absorption limit < 150g/m²\\n- Color: Natural Kraft Brown / White exterior\\n- Size/Fit: Standard outer shipping cartons (50x40x40 cm)\\n- Load Limits: Rated for safe transit up to 25 kg weight load"
+        
+        if specs:
+            self.rfq_specs_text.delete("1.0", tk.END)
+            self.rfq_specs_text.insert("1.0", specs.replace("\\n", "\n"))
 
 if __name__ == "__main__":
     app = App()
