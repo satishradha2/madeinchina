@@ -381,6 +381,7 @@ class App(ctk.CTk):
         self.tabview.add("🧮 Sourcing Matrix")
         self.tabview.add("🔍 AI Visual Search")
         self.tabview.add("🇦🇪 UAE Customs & HS Code")
+        self.tabview.add("🚢 Container Packing")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -540,6 +541,9 @@ class App(ctk.CTk):
 
         # Setup UAE Customs & HS Code tab
         self.setup_uae_customs_tab()
+
+        # Setup Container Packing tab
+        self.setup_container_packing_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -1103,6 +1107,8 @@ class App(ctk.CTk):
             self.update_sourcing_matrix_tab()
         if hasattr(self, 'uae_category_cb'):
             self.update_uae_customs_tab()
+        if hasattr(self, 'packing_product_cb'):
+            self.update_container_packing_tab()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -5741,6 +5747,162 @@ AI TARIFF & COMPLIANCE DETAIL:
         fig.tight_layout()
 
         canvas = FigureCanvasTkAgg(fig, master=self.radar_canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def setup_container_packing_tab(self):
+        tab_packing = self.tabview.tab("🚢 Container Packing")
+        tab_packing.grid_columnconfigure(0, weight=1)
+        tab_packing.grid_columnconfigure(1, weight=1)
+        tab_packing.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_packing, text="Logistics Container Capacity Packing Simulator", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Packing Configuration ---
+        left_frame = ctk.CTkFrame(tab_packing)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="📦 Packing Settings", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+
+        ctk.CTkLabel(left_frame, text="Select Product:").grid(row=1, column=0, padx=15, pady=5, sticky="w")
+        self.packing_product_cb = ctk.CTkComboBox(left_frame, values=[], command=self.on_packing_product_changed)
+        self.packing_product_cb.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
+
+        ctk.CTkLabel(left_frame, text="Carton Pack Info:").grid(row=2, column=0, padx=15, pady=5, sticky="w")
+        self.packing_info_lbl = ctk.CTkLabel(left_frame, text="1000 pcs/ctn, 0.045 CBM", font=ctk.CTkFont(weight="bold"))
+        self.packing_info_lbl.grid(row=2, column=1, padx=15, pady=5, sticky="w")
+
+        ctk.CTkLabel(left_frame, text="Order Quantity (pcs):").grid(row=3, column=0, padx=15, pady=5, sticky="w")
+        self.packing_qty_entry = ctk.CTkEntry(left_frame)
+        self.packing_qty_entry.grid(row=3, column=1, padx=15, pady=5, sticky="ew")
+        self.packing_qty_entry.insert(0, "100000")
+
+        ctk.CTkLabel(left_frame, text="Container Type:").grid(row=4, column=0, padx=15, pady=5, sticky="w")
+        self.packing_container_cb = ctk.CTkComboBox(left_frame, values=["20GP (28 CBM)", "40GP (58 CBM)", "40HQ (68 CBM)"])
+        self.packing_container_cb.grid(row=4, column=1, padx=15, pady=5, sticky="ew")
+        self.packing_container_cb.set("20GP (28 CBM)")
+
+        self.btn_run_packing = ctk.CTkButton(left_frame, text="🚢 Simulate Container Packing", fg_color="#1f538d", hover_color="#153e6b", command=self.run_container_packing_simulation)
+        self.btn_run_packing.grid(row=5, column=0, columnspan=2, padx=15, pady=25, sticky="ew")
+
+        # --- RIGHT PANEL: Visual Map & Summary ---
+        right_frame = ctk.CTkFrame(tab_packing)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📊 Utilization Summary", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        self.packing_summary_box = ctk.CTkTextbox(right_frame, height=120)
+        self.packing_summary_box.grid(row=1, column=0, padx=15, pady=5, sticky="ew")
+        self.packing_summary_box.insert("1.0", "Configure parameters on the left and click Simulate.")
+        self.packing_summary_box.configure(state="disabled")
+
+        self.packing_canvas_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        self.packing_canvas_frame.grid(row=2, column=0, padx=15, pady=10, sticky="nsew")
+
+    def update_container_packing_tab(self):
+        products = set()
+        for r in self.extracted_data:
+            prod = (r.get("product") or "").strip().title()
+            if prod:
+                products.add(prod)
+        sorted_prods = sorted(list(products))
+        self.packing_product_cb.configure(values=sorted_prods)
+        if sorted_prods:
+            self.packing_product_cb.set(sorted_prods[0])
+            self.on_packing_product_changed(sorted_prods[0])
+
+    def on_packing_product_changed(self, choice):
+        for r in self.extracted_data:
+            if (r.get("product") or "").strip().lower() == choice.lower():
+                pack_details = r.get("packing") or "1000 pcs/ctn, 0.045 CBM"
+                self.packing_info_lbl.configure(text=pack_details)
+                break
+
+    def run_container_packing_simulation(self):
+        choice = self.packing_product_cb.get()
+        if not choice:
+            messagebox.showwarning("Warning", "Please select a product first!")
+            return
+            
+        try:
+            qty = float(self.packing_qty_entry.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Quantity must be a valid number!")
+            return
+
+        pack_text = self.packing_info_lbl.cget("text")
+        pcs_per_ctn, unit_cbm = self.parse_packing_metrics(pack_text)
+
+        import math
+        total_ctns = math.ceil(qty / pcs_per_ctn)
+        total_cbm = total_ctns * unit_cbm
+
+        container_choice = self.packing_container_cb.get()
+        max_cbm = 28.0
+        container_name = "20GP"
+        if "40GP" in container_choice:
+            max_cbm = 58.0
+            container_name = "40GP"
+        elif "40HQ" in container_choice:
+            max_cbm = 68.0
+            container_name = "40HQ"
+
+        fill_percent = (total_cbm / max_cbm) * 100.0
+
+        if fill_percent > 100.0:
+            rec = f"⚠️ OVERFILLED! Your shipment requires {total_cbm:.2f} CBM which exceeds the {container_name} capacity of {max_cbm} CBM. Upgrade your container size or split the load."
+        elif fill_percent >= 80.0:
+            rec = f"🟢 OPTIMAL! Your shipment fills {fill_percent:.1f}% of the {container_name} container, representing highly efficient container utilization."
+        else:
+            rec = f"🟡 UNDERFILLED! You are only utilizing {fill_percent:.1f}% of the {container_name} container. Consider ordering more products to maximize your logistics freight rates."
+
+        summary = f"""Total Cartons: {total_ctns} ctns
+Total CBM: {total_cbm:.3f} CBM
+Container Capacity: {max_cbm} CBM ({container_name})
+Space Utilized: {fill_percent:.1f}%
+
+Sourcing Action Guidance:
+{rec}"""
+
+        self.packing_summary_box.configure(state="normal")
+        self.packing_summary_box.delete("1.0", tk.END)
+        self.packing_summary_box.insert("1.0", summary)
+        self.packing_summary_box.configure(state="disabled")
+
+        for w in self.packing_canvas_frame.winfo_children():
+            w.destroy()
+
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        fig, ax = plt.subplots(figsize=(5.5, 2.0), dpi=100)
+        fig.patch.set_facecolor('#2b2b2b')
+        ax.set_facecolor('#2b2b2b')
+
+        fill_width = 10.0 * (min(fill_percent, 100.0) / 100.0)
+        bar_color = "#1f538d" if fill_percent <= 100 else "#bf3b3b"
+
+        if fill_width > 0:
+            ax.barh(1, fill_width, height=1.0, color=bar_color, edgecolor='white', label='Filled')
+        if fill_width < 10.0:
+            ax.barh(1, 10.0 - fill_width, left=fill_width, height=1.0, color='#4c4c4c', edgecolor='white', label='Empty')
+
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 2)
+        ax.axis('off')
+
+        ax.text(5, 1, f"{fill_percent:.1f}% Filled", color='white', ha='center', va='center', weight='bold', fontsize=11)
+        ax.set_title(f"{container_name} Container Space Utilization Map", color='white', fontsize=9, pad=5)
+
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.packing_canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
