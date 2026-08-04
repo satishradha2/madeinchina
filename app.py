@@ -3298,6 +3298,11 @@ class App(ctk.CTk):
                 row_fr.pack(fill="x", pady=3, padx=5)
                 
                 ctk.CTkLabel(row_fr, text=f"{supplier} - {product}", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10)
+                
+                # Add request button next to status label
+                btn_req = ctk.CTkButton(row_fr, text="✉ Request Extension", width=120, height=24, fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11), command=lambda record=r: self.open_extension_request_popup(record))
+                btn_req.pack(side="right", padx=10)
+                
                 ctk.CTkLabel(row_fr, text=status_text, text_color=text_color, font=ctk.CTkFont(weight="bold")).pack(side="right", padx=10)
 
         # 3. Populate Production Planner progress bars
@@ -3561,6 +3566,137 @@ class App(ctk.CTk):
                 self.files_box_unsynced.delete(idx)
                 break
         self.files_box_synced.insert(tk.END, f"✅ {name}")
+
+    def open_extension_request_popup(self, r):
+        # Get Details
+        supplier = r.get("supplier") or "Supplier"
+        product = r.get("product") or "Product"
+        val_date = r.get("validity_date") or "N/A"
+        price = r.get("price") or "N/A"
+        currency = r.get("currency") or "USD"
+        
+        # Query contact email
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT contact_info FROM supplier_contacts WHERE supplier = ?", (supplier,))
+        contact_row = c.fetchone()
+        conn.close()
+        
+        email = ""
+        if contact_row and contact_row[0]:
+            import re
+            emails = re.findall(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', contact_row[0])
+            if emails:
+                email = emails[0]
+                
+        # Setup top-level window
+        popup = ctk.CTkToplevel(self)
+        popup.title("Request Quote Validity Extension")
+        popup.geometry("600x520")
+        popup.resizable(False, False)
+        popup.attributes("-topmost", True)
+        
+        # Center the window
+        popup.update_idletasks()
+        width = popup.winfo_width()
+        height = popup.winfo_height()
+        x = (popup.winfo_screenwidth() // 2) - (width // 2)
+        y = (popup.winfo_screenheight() // 2) - (height // 2)
+        popup.geometry(f'+{x}+{y}')
+        
+        # Title Label
+        ctk.CTkLabel(popup, text="✉ Quotation Extension Email Draft", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(15, 5), padx=20, anchor="w")
+        ctk.CTkLabel(popup, text=f"Generate validity extension request for {supplier} ({product})", text_color="grey").pack(pady=(0, 10), padx=20, anchor="w")
+        
+        # Recipient email row
+        email_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        email_frame.pack(fill="x", padx=20, pady=5)
+        
+        ctk.CTkLabel(email_frame, text="To: ", width=50, anchor="w").pack(side="left")
+        email_entry = ctk.CTkEntry(email_frame, width=350)
+        email_entry.pack(side="left", fill="x", expand=True)
+        if email:
+            email_entry.insert(0, email)
+            
+        # Subject row
+        subject_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        subject_frame.pack(fill="x", padx=20, pady=5)
+        
+        ctk.CTkLabel(subject_frame, text="Subject: ", width=50, anchor="w").pack(side="left")
+        subject_entry = ctk.CTkEntry(subject_frame, width=350)
+        subject_entry.pack(side="left", fill="x", expand=True)
+        subject_entry.insert(0, f"Quote Validity Extension Request: {product} - {supplier}")
+        
+        # Text box for email body
+        text_box = ctk.CTkTextbox(popup, height=280, font=("Consolas", 11))
+        text_box.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        # Button container row
+        btn_row = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_row.pack(fill="x", side="bottom", pady=15, padx=20)
+        
+        def run_generation():
+            btn_regen.configure(state="disabled", text="Generating...")
+            popup.update()
+            
+            ai_prompt = f"""
+            Write a professional and polite counter-extension email to request a quotation validity extension.
+            
+            Details:
+            - Supplier Name: {supplier}
+            - Product Item: {product}
+            - Current Expiry Date: {val_date}
+            - Quoted Price: {price} {currency}
+            
+            Instructions:
+            - Be concise, polite, and formal.
+            - State that we are finalizing our sourcing evaluation and require a 30-day extension of the quote validity.
+            - Address the supplier professionally.
+            - Output ONLY the email body. Do not include subject line or placeholders like [Your Name]. Use 'Procurement Team' as the sender signature.
+            """
+            
+            try:
+                email_body = self.generate_with_fallback([], ai_prompt, json_response=False)
+                self.after(0, lambda text=email_body: update_text_box(text))
+            except Exception as e:
+                self.after(0, lambda err=e: update_text_box(f"Error generating email: {err}"))
+                
+        def update_text_box(text):
+            text_box.delete("1.0", tk.END)
+            text_box.insert("1.0", text)
+            btn_regen.configure(state="normal", text="✍ Regenerate")
+            
+        def copy_email():
+            content = text_box.get("1.0", tk.END).strip()
+            if content:
+                self.clipboard_clear()
+                self.clipboard_append(content)
+                messagebox.showinfo("Copied", "Email body copied to clipboard successfully!", parent=popup)
+                
+        def launch_client():
+            to_email = email_entry.get().strip()
+            subj = subject_entry.get().strip()
+            body = text_box.get("1.0", tk.END).strip()
+            
+            import urllib.parse
+            import webbrowser
+            mailto_url = f"mailto:{to_email}?subject={urllib.parse.quote(subj)}&body={urllib.parse.quote(body)}"
+            webbrowser.open(mailto_url)
+            
+        btn_close = ctk.CTkButton(btn_row, text="Close", width=80, fg_color="#3c3c3c", command=popup.destroy)
+        btn_close.pack(side="left", padx=5)
+        
+        btn_regen = ctk.CTkButton(btn_row, text="✍ Generate", width=120, command=lambda: threading.Thread(target=run_generation, daemon=True).start())
+        btn_regen.pack(side="right", padx=5)
+        
+        btn_copy = ctk.CTkButton(btn_row, text="📋 Copy", width=100, fg_color="#6e4513", hover_color="#52320b", command=copy_email)
+        btn_copy.pack(side="right", padx=5)
+        
+        btn_launch = ctk.CTkButton(btn_row, text="🚀 Launch Mail", width=120, fg_color="#1f538d", hover_color="#153e6b", command=launch_client)
+        btn_launch.pack(side="right", padx=5)
+        
+        # Start first generation automatically
+        threading.Thread(target=run_generation, daemon=True).start()
 
 if __name__ == "__main__":
     app = App()
