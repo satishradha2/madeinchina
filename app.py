@@ -353,20 +353,12 @@ class App(ctk.CTk):
         # Navigation buttons mapping
         self.sidebar_buttons = {}
         nav_items = [
-            ("📊 Quotes Grid", "Sourcing Grid"),
-            ("🧮 Sourcing Matrix", "Sourcing Matrix"),
-            ("🏆 Scorecard Matrix", "Supplier Scorecard"),
-            ("📈 Visual Charts", "Visual Charts"),
-            ("💡 AI Insights", "AI Insights"),
-            ("📅 Gantt Timeline", "Sourcing Timeline"),
-            ("📦 Landed & Packing", "Landed & Packing"),
-            ("💰 Profit Simulator", "Profit Simulator"),
-            ("🏢 Factory Audit & QC", "Factory Audit & QC"),
-            ("📝 RFQ Generator", "RFQ Generator"),
-            ("🔍 AI Visual Search", "AI Visual Search"),
-            ("🇦🇪 UAE Customs", "UAE Customs"),
-            ("📇 Supplier Directory", "Supplier Directory"),
-            ("⚙️ Settings & API", "Settings & API")
+            ("📊 Sourcing & Analysis", "Sourcing Analysis"),
+            ("🏆 Scorecard & Compliance", "Scorecard Compliance"),
+            ("📦 Logistics & Costing", "Logistics Costing"),
+            ("📝 RFQs & Outreach", "RFQs Outreach"),
+            ("🔍 Customs & AI Search", "Customs AI Search"),
+            ("⚙️ Settings & System", "Settings Directory")
         ]
 
         for label, page_key in nav_items:
@@ -378,9 +370,10 @@ class App(ctk.CTk):
                 text_color="white",
                 hover_color="#2c2c2c",
                 command=lambda pk=page_key: self.show_page(pk),
-                height=32
+                height=38,
+                font=ctk.CTkFont(size=12, weight="bold")
             )
-            btn.pack(fill="x", pady=2, padx=5)
+            btn.pack(fill="x", pady=4, padx=8)
             self.sidebar_buttons[page_key] = btn
 
         # --- MIDDLE PANEL: Active Page Container ---
@@ -390,15 +383,23 @@ class App(ctk.CTk):
         self.right_frame.grid_rowconfigure(0, weight=1)
 
         self.pages = {}
-        for name in ["Sourcing Grid", "Sourcing Matrix", "Supplier Scorecard", "Visual Charts", "AI Insights", 
-                     "Sourcing Timeline", "Landed & Packing", "Profit Simulator", "Factory Audit & QC", 
-                     "RFQ Generator", "AI Visual Search", "UAE Customs", "Supplier Directory", "Settings & API"]:
+        for name in ["Sourcing Analysis", "Scorecard Compliance", "Logistics Costing", "RFQs Outreach", "Customs AI Search", "Settings Directory"]:
             self.pages[name] = ctk.CTkFrame(self.right_frame, fg_color="transparent")
             self.pages[name].grid_columnconfigure(0, weight=1)
             self.pages[name].grid_rowconfigure(0, weight=1)
 
-        # --- PAGE 1: Sourcing Grid (Split Frame layout) ---
-        tab_comp = self.pages["Sourcing Grid"]
+        # ---------------------------------------------
+        # 1. Workspace: Sourcing & Analysis
+        # ---------------------------------------------
+        self.sourcing_tabview = ctk.CTkTabview(self.pages["Sourcing Analysis"])
+        self.sourcing_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        tab_comp = self.sourcing_tabview.add("📊 Quotes Comparison")
+        self.matrix_tab = self.sourcing_tabview.add("🧮 Sourcing Matrix")
+        tab_charts = self.sourcing_tabview.add("📈 Visual Charts")
+        tab_insights = self.sourcing_tabview.add("💡 AI Sourcing Insights")
+
+        # Split frame layout inside Quotes Comparison tab
         tab_comp.grid_columnconfigure(0, weight=0, minsize=260)
         tab_comp.grid_columnconfigure(1, weight=1)
         tab_comp.grid_rowconfigure(0, weight=1)
@@ -453,8 +454,52 @@ class App(ctk.CTk):
         self.progress_bar.pack(fill="x", padx=10, pady=5)
         self.progress_bar.set(0)
 
-        # --- Settings & API page layout ---
-        tab_settings = self.pages["Settings & API"]
+        # ---------------------------------------------
+        # 2. Workspace: Scorecard & Compliance
+        # ---------------------------------------------
+        self.scorecard_tabview = ctk.CTkTabview(self.pages["Scorecard Compliance"])
+        self.scorecard_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        tab_scorecard = self.scorecard_tabview.add("🏆 Supplier Scorecard")
+        tab_qc = self.scorecard_tabview.add("🏢 Factory Audit & QC")
+
+        # ---------------------------------------------
+        # 3. Workspace: Logistics & Costing
+        # ---------------------------------------------
+        self.logistics_tabview = ctk.CTkTabview(self.pages["Logistics Costing"])
+        self.logistics_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        tab_landed = self.logistics_tabview.add("📦 Landed Cost Simulator")
+        tab_opt = self.logistics_tabview.add("🎯 Purchase Optimizer")
+        tab_packing = self.logistics_tabview.add("🚢 Container Packing")
+        tab_timeline = self.logistics_tabview.add("📅 Gantt Timeline")
+        tab_prof = self.logistics_tabview.add("💰 Profit Simulator")
+
+        # ---------------------------------------------
+        # 4. Workspace: RFQs & Outreach
+        # ---------------------------------------------
+        self.rfqs_tabview = ctk.CTkTabview(self.pages["RFQs Outreach"])
+        self.rfqs_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        tab_rfq = self.rfqs_tabview.add("📝 RFQ Generator")
+
+        # ---------------------------------------------
+        # 5. Workspace: Customs & AI Search
+        # ---------------------------------------------
+        self.search_tabview = ctk.CTkTabview(self.pages["Customs AI Search"])
+        self.search_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        tab_search = self.search_tabview.add("🔍 AI Visual Search")
+        tab_uae = self.search_tabview.add("🇦🇪 UAE Customs & HS Code")
+
+        # ---------------------------------------------
+        # 6. Workspace: Settings & System
+        # ---------------------------------------------
+        self.settings_tabview = ctk.CTkTabview(self.pages["Settings Directory"])
+        self.settings_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        tab_settings = self.settings_tabview.add("⚙️ Settings & API")
+        tab_dir = self.settings_tabview.add("📇 Supplier Directory")
         
         settings_card = ctk.CTkFrame(tab_settings, fg_color="#2b2b2b")
         settings_card.pack(pady=20, padx=20, fill="both", expand=True)
@@ -506,15 +551,6 @@ class App(ctk.CTk):
         self.btn_clear_all.pack(side="left", padx=15, pady=(5, 15))
         
         ctk.CTkLabel(safety_card, text="Warning: Clicking this button permanently purges all quotation records, scorecard data, compliance audits, and attachments from the local database.", font=ctk.CTkFont(size=11), text_color="grey").pack(side="left", padx=10, pady=(5, 15))
-
-        # --- Landed & Packing inner tabview ---
-        tab_landed_base = self.pages["Landed & Packing"]
-        self.logistics_tabview = ctk.CTkTabview(tab_landed_base)
-        self.logistics_tabview.pack(fill="both", expand=True, padx=5, pady=5)
-        
-        tab_landed = self.logistics_tabview.add("📦 Landed Cost Simulator")
-        tab_opt = self.logistics_tabview.add("🎯 Purchase Optimizer")
-        tab_packing = self.logistics_tabview.add("🚢 Container Packing")
 
         # --- Re-grid Sourcing Grid elements inside subframe ---
         self.table_ctrl_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
@@ -595,7 +631,7 @@ class App(ctk.CTk):
 
 
         # --- PAGE 2: Supplier Directory ---
-        tab_dir = self.pages["Supplier Directory"]
+        tab_dir = self.settings_tabview.tab("📇 Supplier Directory")
         tab_dir.grid_columnconfigure(0, weight=1)
         tab_dir.grid_rowconfigure(1, weight=1)
 
@@ -615,7 +651,7 @@ class App(ctk.CTk):
         self.directory_scroll_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
 
         # --- PAGE 3: Visual Price Comparison Charts ---
-        tab_charts = self.pages["Visual Charts"]
+        tab_charts = self.sourcing_tabview.tab("📈 Visual Charts")
         tab_charts.grid_columnconfigure(0, weight=1)
         tab_charts.grid_rowconfigure(1, weight=1)
 
@@ -711,7 +747,7 @@ class App(ctk.CTk):
         self.load_config()
         self.load_chat_history_from_db()
         self.load_all_quotes_from_db()
-        self.show_page("Sourcing Grid")
+        self.show_page("Sourcing Analysis")
 
     def get_validity_display(self, date_str):
         if not date_str or date_str.lower() in ["n/a", "null", "none", ""]:
@@ -1819,7 +1855,7 @@ class App(ctk.CTk):
                 btn.configure(fg_color="transparent")
                 
         # Toggle document preview frame visibility based on page
-        if page_name in ["Sourcing Grid", "Sourcing Matrix", "Supplier Directory"]:
+        if page_name in ["Sourcing Analysis", "Settings Directory"]:
             self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
         else:
             self.preview_frame.grid_forget()
@@ -2831,7 +2867,7 @@ class App(ctk.CTk):
         threading.Thread(target=run_pdf_gen, daemon=True).start()
 
     def setup_sourcing_insights_tab(self):
-        tab_insights = self.pages["AI Insights"]
+        tab_insights = self.sourcing_tabview.tab("💡 AI Sourcing Insights")
         tab_insights.grid_columnconfigure(0, weight=1)
         tab_insights.grid_columnconfigure(1, weight=1)
         tab_insights.grid_rowconfigure(1, weight=1)
@@ -3203,7 +3239,7 @@ class App(ctk.CTk):
             self.after(0, lambda err=e: messagebox.showerror("Error", f"Failed to organize files: {err}"))
 
     def setup_scorecard_tab(self):
-        tab_scorecard = self.pages["Supplier Scorecard"]
+        tab_scorecard = self.scorecard_tabview.tab("🏆 Supplier Scorecard")
         tab_scorecard.grid_columnconfigure(0, weight=3)
         tab_scorecard.grid_columnconfigure(1, weight=1)
         tab_scorecard.grid_rowconfigure(1, weight=1)
@@ -3572,7 +3608,7 @@ class App(ctk.CTk):
             val_lbl.grid(row=idx+1, column=1, sticky="w", padx=10, pady=2)
 
     def setup_timeline_tab(self):
-        tab_timeline = self.pages["Sourcing Timeline"]
+        tab_timeline = self.logistics_tabview.tab("📅 Gantt Timeline")
         tab_timeline.grid_columnconfigure(0, weight=1)
         tab_timeline.grid_columnconfigure(1, weight=1)
         tab_timeline.grid_rowconfigure(1, weight=1)
@@ -4689,7 +4725,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(self.opt_results_scroll, text="⚠️ No single supplier in database quotes all selected products.", text_color="grey").pack(pady=10)
 
     def setup_rfq_generator_tab(self):
-        tab_rfq = self.pages["RFQ Generator"]
+        tab_rfq = self.rfqs_tabview.tab("📝 RFQ Generator")
         tab_rfq.grid_columnconfigure(0, weight=1)
         tab_rfq.grid_columnconfigure(1, weight=1)
         tab_rfq.grid_rowconfigure(1, weight=1)
@@ -4969,7 +5005,7 @@ class App(ctk.CTk):
             messagebox.showerror("Error", f"Failed to generate RFQ PDF: {e}")
 
     def setup_profit_simulator_tab(self):
-        tab_prof = self.pages["Profit Simulator"]
+        tab_prof = self.logistics_tabview.tab("💰 Profit Simulator")
         tab_prof.grid_columnconfigure(0, weight=1)
         tab_prof.grid_columnconfigure(1, weight=3)
         tab_prof.grid_rowconfigure(1, weight=1)
@@ -5197,7 +5233,7 @@ class App(ctk.CTk):
             )
 
     def setup_factory_qc_tab(self):
-        tab_qc = self.pages["Factory Audit & QC"]
+        tab_qc = self.scorecard_tabview.tab("🏢 Factory Audit & QC")
         tab_qc.grid_columnconfigure(0, weight=1)
         tab_qc.grid_columnconfigure(1, weight=1)
         tab_qc.grid_rowconfigure(1, weight=1)
@@ -5476,7 +5512,7 @@ class App(ctk.CTk):
                 self.after(0, lambda: self.currency_status_lbl.configure(text="Offline Rates: 1 USD = 7.25 CNY | 0.92 EUR", text_color="grey"))
 
     def setup_sourcing_matrix_tab(self):
-        self.matrix_tab = self.pages["Sourcing Matrix"]
+        self.matrix_tab = self.sourcing_tabview.tab("🧮 Sourcing Matrix")
         self.matrix_tab.grid_columnconfigure(0, weight=1)
         self.matrix_tab.grid_rowconfigure(1, weight=1)
 
@@ -5728,7 +5764,7 @@ class App(ctk.CTk):
         webbrowser.open(mail_url)
 
     def setup_uae_customs_tab(self):
-        tab_uae = self.pages["UAE Customs"]
+        tab_uae = self.search_tabview.tab("🇦🇪 UAE Customs & HS Code")
         tab_uae.grid_columnconfigure(0, weight=1)
         tab_uae.grid_columnconfigure(1, weight=1)
         tab_uae.grid_rowconfigure(1, weight=1)
@@ -6086,7 +6122,7 @@ Sourcing Action Guidance:
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def setup_visual_search_tab(self):
-        tab_search = self.pages["AI Visual Search"]
+        tab_search = self.search_tabview.tab("🔍 AI Visual Search")
         tab_search.grid_columnconfigure(0, weight=1)
         tab_search.grid_columnconfigure(1, weight=1)
         tab_search.grid_rowconfigure(1, weight=1)
