@@ -5670,10 +5670,18 @@ class App(ctk.CTk):
         sorted_suppliers = sorted(list(suppliers))
         sorted_products = sorted(list(products))
 
-        # Filter products based on category dropdown choice
+        # Filter products and active suppliers based on category dropdown choice
         if hasattr(self, 'matrix_category_cb'):
             choice = self.matrix_category_cb.get()
             if choice and choice != "All":
+                # Find suppliers who quote this product
+                active_sups = set()
+                for r in self.extracted_data:
+                    r_prod = (r.get("product") or "").strip().lower()
+                    r_sup = self.clean_supplier_name(r.get("supplier"))
+                    if r_prod == choice.lower() and r_sup and r_sup != "Unknown":
+                        active_sups.add(r_sup)
+                sorted_suppliers = sorted(list(active_sups))
                 sorted_products = [p for p in sorted_products if p.lower() == choice.lower()]
 
         if not sorted_suppliers or not sorted_products:
