@@ -5612,9 +5612,20 @@ class App(ctk.CTk):
         self.matrix_tab.grid_columnconfigure(0, weight=1)
         self.matrix_tab.grid_rowconfigure(1, weight=1)
 
-        # Header Title
-        title_lbl = ctk.CTkLabel(self.matrix_tab, text="Supplier vs Product Side-by-Side Sourcing Matrix", font=ctk.CTkFont(size=20, weight="bold"))
-        title_lbl.grid(row=0, column=0, padx=20, pady=(15, 10), sticky="w")
+        # Header Control Frame
+        self.matrix_ctrl_frame = ctk.CTkFrame(self.matrix_tab, fg_color="transparent")
+        self.matrix_ctrl_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(15, 10))
+
+        title_lbl = ctk.CTkLabel(self.matrix_ctrl_frame, text="Supplier vs Product Side-by-Side Sourcing Matrix", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.pack(side="left")
+
+        # Dynamic Category combobox
+        self.matrix_category_cb = ctk.CTkComboBox(self.matrix_ctrl_frame, values=["All"], command=lambda choice: self.update_sourcing_matrix_tab(), width=180)
+        self.matrix_category_cb.pack(side="right", padx=10)
+        self.matrix_category_cb.set("All")
+
+        self.matrix_cat_lbl = ctk.CTkLabel(self.matrix_ctrl_frame, text="Select Product Category:")
+        self.matrix_cat_lbl.pack(side="right", padx=5)
 
         # Scrollable Frame to hold Treeview
         self.matrix_frame = ctk.CTkFrame(self.matrix_tab)
@@ -5632,6 +5643,20 @@ class App(ctk.CTk):
             ctk.CTkLabel(self.matrix_frame, text="No sourcing data loaded in database.", text_color="grey").pack(pady=40)
             return
 
+        # Dynamically update category dropdown options
+        all_cats = set()
+        for r in self.extracted_data:
+            p = (r.get("product") or "").strip().title()
+            if p:
+                all_cats.add(p)
+        sorted_cats = ["All"] + sorted(list(all_cats))
+        
+        # Only configure values if they differ to avoid reset loops
+        if hasattr(self, 'matrix_category_cb'):
+            current_vals = self.matrix_category_cb.cget("values")
+            if list(current_vals) != sorted_cats:
+                self.matrix_category_cb.configure(values=sorted_cats)
+
         suppliers = set()
         products = set()
         for r in self.extracted_data:
@@ -5645,8 +5670,14 @@ class App(ctk.CTk):
         sorted_suppliers = sorted(list(suppliers))
         sorted_products = sorted(list(products))
 
+        # Filter products based on category dropdown choice
+        if hasattr(self, 'matrix_category_cb'):
+            choice = self.matrix_category_cb.get()
+            if choice and choice != "All":
+                sorted_products = [p for p in sorted_products if p.lower() == choice.lower()]
+
         if not sorted_suppliers or not sorted_products:
-            ctk.CTkLabel(self.matrix_frame, text="No suppliers or products found to build comparison matrix.", text_color="grey").pack(pady=40)
+            ctk.CTkLabel(self.matrix_frame, text="No suppliers or products found to build comparison matrix for selected category.", text_color="grey").pack(pady=40)
             return
 
         cols = ("product",) + tuple(sorted_suppliers)
