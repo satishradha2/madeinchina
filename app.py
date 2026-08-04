@@ -368,6 +368,7 @@ class App(ctk.CTk):
         self.tabview.add("💰 Profit Simulator")
         self.tabview.add("🏢 Factory Audit & QC")
         self.tabview.add("🧮 Sourcing Matrix")
+        self.tabview.add("🔍 AI Visual Search")
 
         # --- TAB 1: Quotes Comparison Grid and Chatbot ---
         tab_comp = self.tabview.tab("📊 Quotes Comparison")
@@ -521,6 +522,9 @@ class App(ctk.CTk):
 
         # Setup Sourcing Matrix tab
         self.setup_sourcing_matrix_tab()
+
+        # Setup AI Visual Search tab
+        self.setup_visual_search_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -3456,45 +3460,74 @@ class App(ctk.CTk):
             ctk.CTkLabel(self.timeline_display_scroll, text="No quotes matching selected category.", text_color="grey").pack(pady=20)
             return
 
-        max_days = 30
-        rows_to_plot = []
-        for r in filtered:
-            lt_str = r.get("lead_time") or ""
+        # Render visual Gantt Chart using Matplotlib
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        
+        fig, ax = plt.subplots(figsize=(6, 3.5), dpi=100)
+        fig.patch.set_facecolor('#2b2b2b')
+        ax.set_facecolor('#2b2b2b')
+        
+        y_ticks = []
+        y_labels = []
+        
+        for idx, r_item in enumerate(filtered):
+            sup = self.clean_supplier_name(r_item.get("supplier"))
+            prod = r_item.get("product") or "Product"
+            lead_str = r_item.get("lead_time") or "30 days"
+            
+            # Parse lead time
+            lead_days = 30
             import re
-            match = re.search(r'\d+', lt_str)
-            days = 0
-            if match:
-                days = int(match.group(0))
-            if days > max_days:
-                max_days = days
-            rows_to_plot.append((r, days))
-
-        for r, days in rows_to_plot:
-            supplier = self.clean_supplier_name(r.get("supplier"))
-            product = r.get("product") or "Product"
+            lead_match = re.search(r'([0-9.]+)\s*(day|week|month)', lead_str.lower())
+            if lead_match:
+                try:
+                    val = float(lead_match.group(1))
+                    unit = lead_match.group(2)
+                    if "week" in unit: lead_days = val * 7
+                    elif "month" in unit: lead_days = val * 30
+                    else: lead_days = val
+                except: pass
             
-            completion_date = order_date + datetime.timedelta(days=days)
-            comp_date_str = completion_date.strftime("%Y-%m-%d")
-
-            bar_fr = ctk.CTkFrame(self.timeline_display_scroll, fg_color="transparent")
-            bar_fr.pack(fill="x", pady=6, padx=5)
-
-            lbl_fr = ctk.CTkFrame(bar_fr, fg_color="transparent")
-            lbl_fr.pack(fill="x")
+            # Production Phase vs Shipping Phase (FOB to DDP delivery estimation)
+            start_prod = 0
+            end_prod = lead_days
+            start_ship = lead_days
+            end_ship = lead_days + 30 # default 30 days transit
             
-            ctk.CTkLabel(lbl_fr, text=f"{supplier} ({product})", font=ctk.CTkFont(weight="bold")).pack(side="left")
-            ctk.CTkLabel(lbl_fr, text=f"Est Delivery: {comp_date_str} ({days} days)", text_color="#a6e3e9").pack(side="right")
-
-            # Progress bar
-            progress = ctk.CTkProgressBar(bar_fr, height=12)
-            progress.pack(fill="x", pady=(2, 8))
-            progress.set(days / max_days)
-            if days <= 15:
-                progress.configure(progress_color="#368b85")
-            elif days <= 30:
-                progress.configure(progress_color="#1f538d")
-            else:
-                progress.configure(progress_color="#d65a31")
+            ax.barh(idx, end_prod - start_prod, left=start_prod, height=0.4, color="#1f538d", align='center')
+            ax.barh(idx, end_ship - start_ship, left=start_ship, height=0.4, color="#15592e", align='center')
+            
+            y_ticks.append(idx)
+            label_text = f"{sup[:15]} ({prod[:10]})"
+            y_labels.append(label_text)
+            
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_labels, color="white", fontsize=8)
+        ax.set_xlabel("Timeline (Days from Order Date)", color="white", fontsize=9)
+        ax.xaxis.label.set_color("white")
+        ax.tick_params(colors="white", labelsize=8)
+        
+        # Remove borders
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+            
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='#1f538d', label='Production'),
+            Patch(facecolor='#15592e', label='Transit/Sea Freight')
+        ]
+        leg = ax.legend(handles=legend_elements, loc='upper right', facecolor='#2b2b2b', edgecolor='none')
+        for text in leg.get_texts():
+            text.set_color("white")
+            text.set_fontsize(7)
+            
+        fig.tight_layout()
+        
+        canvas = FigureCanvasTkAgg(fig, master=self.timeline_display_scroll)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, pady=5)
 
     def update_preview_gallery_bar(self, row_id, vals):
         for widget in self.preview_gallery_bar.winfo_children():
@@ -5277,6 +5310,183 @@ class App(ctk.CTk):
                     row_vals.append("N/A")
 
             self.matrix_tree.insert("", tk.END, values=row_vals)
+
+    def setup_visual_search_tab(self):
+        tab_search = self.tabview.tab("🔍 AI Visual Search")
+        tab_search.grid_columnconfigure(0, weight=1)
+        tab_search.grid_columnconfigure(1, weight=1)
+        tab_search.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_search, text="AI Sourcing Search by Product Image Similarity", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Upload & Search Run ---
+        left_frame = ctk.CTkFrame(tab_search)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left_frame, text="📷 Upload Target Product Image", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
+
+        self.search_img_preview = ctk.CTkLabel(left_frame, text="No Image Selected", width=220, height=220, fg_color="#2b2b2b", corner_radius=8)
+        self.search_img_preview.pack(pady=15)
+
+        btn_upload = ctk.CTkButton(left_frame, text="📁 Select Product Photo", command=self.select_search_product_photo)
+        btn_upload.pack(pady=5, padx=20, fill="x")
+
+        self.btn_run_search = ctk.CTkButton(left_frame, text="⚡ Run Visual Search", fg_color="#1f538d", hover_color="#153e6b", command=self.run_visual_similarity_search)
+        self.btn_run_search.pack(pady=20, padx=20, fill="x")
+        self.uploaded_search_img_path = ""
+
+        # --- RIGHT PANEL: Results list ---
+        right_frame = ctk.CTkFrame(tab_search)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="🎯 Matching Supplier Quotes", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+
+        self.search_results_scroll = ctk.CTkScrollableFrame(right_frame, fg_color="#2b2b2b")
+        self.search_results_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
+        self.search_results_scroll.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(self.search_results_scroll, text="Upload a product photo and click Run Visual Search.", text_color="grey").pack(pady=40)
+
+    def select_search_product_photo(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Image files", "*.png;*.jpg;*.jpeg")]
+        )
+        if not path:
+            return
+        self.uploaded_search_img_path = path
+        try:
+            from PIL import Image
+            img = Image.open(path)
+            img.thumbnail((220, 220))
+            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+            self.search_img_preview.configure(image=ctk_img, text="")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load image preview: {e}")
+
+    def run_visual_similarity_search(self):
+        if not self.uploaded_search_img_path:
+            messagebox.showwarning("Warning", "Please select a product photo to search for first!")
+            return
+
+        for w in self.search_results_scroll.winfo_children():
+            w.destroy()
+
+        candidates = []
+        for r in self.extracted_data:
+            media = r.get("attached_media") or ""
+            if media:
+                media_files = [m.strip() for m in media.split(";") if m.strip()]
+                for m_file in media_files:
+                    ext = os.path.splitext(m_file)[1].lower()
+                    if ext in {".png", ".jpg", ".jpeg"}:
+                        abs_p = os.path.abspath(m_file)
+                        if os.path.exists(abs_p):
+                            candidates.append((r, abs_p))
+                            break
+
+        if not candidates:
+            ctk.CTkLabel(self.search_results_scroll, text="⚠️ No quote records in database contain attached images to compare against.", text_color="grey").pack(pady=40)
+            return
+
+        self.btn_run_search.configure(state="disabled", text="Running AI Visual Scan...")
+        self.update()
+
+        def run_ai_scan():
+            try:
+                from google.genai import types
+                
+                with open(self.uploaded_search_img_path, "rb") as f:
+                    target_bytes = f.read()
+
+                parts = [
+                    types.Part.from_bytes(data=target_bytes, mime_type="image/jpeg"),
+                    "Above is the Target Product Image we are trying to find matches for in our database.\n"
+                ]
+
+                part_idx_to_candidate = {}
+                for idx, (r, cand_path) in enumerate(candidates[:5]):
+                    with open(cand_path, "rb") as f:
+                        cand_bytes = f.read()
+                    
+                    p_num = idx + 2
+                    parts.append(types.Part.from_bytes(data=cand_bytes, mime_type="image/jpeg"))
+                    parts.append(f"Candidate Reference #{p_num} (Supplier: {self.clean_supplier_name(r.get('supplier'))}, Product: {r.get('product')})\n")
+                    part_idx_to_candidate[p_num] = r
+
+                ai_prompt = """
+                Compare the Target Product Image (Image 1) against each of the Candidate Reference images.
+                Rate the visual similarity (matching product design, application, material, color, shape) of each Candidate on a score from 0 to 100.
+                
+                Return the results strictly matching this JSON schema:
+                {
+                  "matches": [
+                    {
+                      "candidate_index": 2,
+                      "score": 90,
+                      "rationale": "Brief 1-sentence rationale of why it matches or differs"
+                    }
+                  ]
+                }
+                """
+                parts.append(ai_prompt)
+
+                response_text = self.generate_with_fallback(parts, "", json_response=True)
+                result = json.loads(response_text)
+                matches = result.get("matches", [])
+
+                matches.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+                self.after(0, lambda: self.btn_run_search.configure(state="normal", text="⚡ Run Visual Search"))
+                self.after(0, lambda: display_matches(matches, part_idx_to_candidate))
+
+            except Exception as e:
+                self.after(0, lambda: self.btn_run_search.configure(state="normal", text="⚡ Run Visual Search"))
+                self.after(0, lambda err=e: display_error(err))
+
+        def display_error(err):
+            ctk.CTkLabel(self.search_results_scroll, text=f"❌ AI Visual Scan failed:\n{err}", text_color="#ffa6a6").pack(pady=20)
+
+        def display_matches(matches, part_idx_to_candidate):
+            if not matches:
+                ctk.CTkLabel(self.search_results_scroll, text="No similar products found in database.", text_color="grey").pack(pady=20)
+                return
+
+            for m in matches:
+                cand_idx = m.get("candidate_index")
+                score = m.get("score", 0)
+                rationale = m.get("rationale", "")
+                
+                quote = part_idx_to_candidate.get(cand_idx)
+                if not quote:
+                    continue
+
+                sup = self.clean_supplier_name(quote.get("supplier"))
+                prod = quote.get("product") or "Product"
+                price = quote.get("price") or 0.0
+                
+                card = ctk.CTkFrame(self.search_results_scroll, fg_color="#3c3c3c")
+                card.pack(fill="x", pady=4, padx=5)
+
+                header = ctk.CTkFrame(card, fg_color="transparent")
+                header.pack(fill="x", padx=10, pady=5)
+
+                badge_color = "#1e4620" if score >= 80 else ("#4d3d1e" if score >= 50 else "#4d1e1e")
+                badge_text_color = "#a6ffa6" if score >= 80 else ("#ffefa6" if score >= 50 else "#ffa6a6")
+                
+                badge = ctk.CTkLabel(header, text=f" {score}% Match ", fg_color=badge_color, text_color=badge_text_color, font=ctk.CTkFont(weight="bold", size=11))
+                badge.pack(side="left")
+
+                ctk.CTkLabel(header, text=f" {sup} — {prod}", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10)
+                ctk.CTkLabel(header, text=f"${price:.4f}/pc" if price < 0.1 else f"${price:.2f}/pc", text_color="#a6e3e9", font=ctk.CTkFont(weight="bold")).pack(side="right")
+
+                ctk.CTkLabel(card, text=rationale, font=ctk.CTkFont(size=11), text_color="grey", justify="left").pack(padx=15, pady=(0, 10), fill="x")
+
+        threading.Thread(target=run_ai_scan, daemon=True).start()
 
 if __name__ == "__main__":
     app = App()
