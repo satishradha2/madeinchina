@@ -3064,6 +3064,7 @@ class App(ctk.CTk):
 
         cols = ("Rank", "Supplier", "Product", "Price", "MOQ", "Lead Time", "Risk", "Score", "Rating")
         self.scorecard_tree = ttk.Treeview(table_frame, columns=cols, show="headings", style="Scorecard.Treeview")
+        self.scorecard_tree.bind("<<TreeviewSelect>>", self.on_scorecard_select)
         
         col_widths = {
             "Rank": 45,
@@ -3093,11 +3094,11 @@ class App(ctk.CTk):
         self.rec_card.grid(row=2, column=0, padx=(20, 10), pady=(5, 15), sticky="ew")
 
         # --- RIGHT COLUMN: Sourcing Weight Simulator ---
-        sim_frame = ctk.CTkFrame(tab_scorecard)
-        sim_frame.grid(row=1, column=1, rowspan=2, padx=(10, 20), pady=10, sticky="nsew")
-        sim_frame.grid_columnconfigure(0, weight=1)
+        self.scorecard_sim_frame = ctk.CTkFrame(tab_scorecard)
+        self.scorecard_sim_frame.grid(row=1, column=1, rowspan=2, padx=(10, 20), pady=10, sticky="nsew")
+        self.scorecard_sim_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(sim_frame, text="🎛 Sourcing Priorities", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
+        ctk.CTkLabel(self.scorecard_sim_frame, text="🎛 Sourcing Priorities", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=(15, 10), sticky="w")
 
         # Initial default weights
         self.weight_price = 40
@@ -3106,32 +3107,32 @@ class App(ctk.CTk):
         self.weight_risk = 20
 
         # Sliders
-        self.lbl_w_price = ctk.CTkLabel(sim_frame, text="Price Weight: 40%", font=ctk.CTkFont(size=11))
+        self.lbl_w_price = ctk.CTkLabel(self.scorecard_sim_frame, text="Price Weight: 40%", font=ctk.CTkFont(size=11))
         self.lbl_w_price.grid(row=1, column=0, padx=15, pady=(10, 2), sticky="w")
-        self.slider_price = ctk.CTkSlider(sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("price", v))
+        self.slider_price = ctk.CTkSlider(self.scorecard_sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("price", v))
         self.slider_price.grid(row=2, column=0, padx=15, pady=2, sticky="ew")
         self.slider_price.set(40)
 
-        self.lbl_w_lead = ctk.CTkLabel(sim_frame, text="Lead Time Weight: 20%", font=ctk.CTkFont(size=11))
+        self.lbl_w_lead = ctk.CTkLabel(self.scorecard_sim_frame, text="Lead Time Weight: 20%", font=ctk.CTkFont(size=11))
         self.lbl_w_lead.grid(row=3, column=0, padx=15, pady=(10, 2), sticky="w")
-        self.slider_lead = ctk.CTkSlider(sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("lead", v))
+        self.slider_lead = ctk.CTkSlider(self.scorecard_sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("lead", v))
         self.slider_lead.grid(row=4, column=0, padx=15, pady=2, sticky="ew")
         self.slider_lead.set(20)
 
-        self.lbl_w_moq = ctk.CTkLabel(sim_frame, text="MOQ Weight: 20%", font=ctk.CTkFont(size=11))
+        self.lbl_w_moq = ctk.CTkLabel(self.scorecard_sim_frame, text="MOQ Weight: 20%", font=ctk.CTkFont(size=11))
         self.lbl_w_moq.grid(row=5, column=0, padx=15, pady=(10, 2), sticky="w")
-        self.slider_moq = ctk.CTkSlider(sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("moq", v))
+        self.slider_moq = ctk.CTkSlider(self.scorecard_sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("moq", v))
         self.slider_moq.grid(row=6, column=0, padx=15, pady=2, sticky="ew")
         self.slider_moq.set(20)
 
-        self.lbl_w_risk = ctk.CTkLabel(sim_frame, text="Risk Weight: 20%", font=ctk.CTkFont(size=11))
+        self.lbl_w_risk = ctk.CTkLabel(self.scorecard_sim_frame, text="Risk Weight: 20%", font=ctk.CTkFont(size=11))
         self.lbl_w_risk.grid(row=7, column=0, padx=15, pady=(10, 2), sticky="w")
-        self.slider_risk = ctk.CTkSlider(sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("risk", v))
+        self.slider_risk = ctk.CTkSlider(self.scorecard_sim_frame, from_=0, to=100, number_of_steps=100, command=lambda v: self.on_weight_changed("risk", v))
         self.slider_risk.grid(row=8, column=0, padx=15, pady=2, sticky="ew")
         self.slider_risk.set(20)
 
         # Reset button
-        btn_reset_weights = ctk.CTkButton(sim_frame, text="Reset Defaults", command=self.reset_weights, fg_color="#3c3c3c")
+        btn_reset_weights = ctk.CTkButton(self.scorecard_sim_frame, text="Reset Defaults", command=self.reset_weights, fg_color="#3c3c3c")
         btn_reset_weights.grid(row=9, column=0, padx=15, pady=25, sticky="ew")
 
     def update_scorecard_tab(self):
@@ -3162,6 +3163,12 @@ class App(ctk.CTk):
         best = matrix[0]
         best_supplier = self.clean_supplier_name(best["supplier"])
         self.set_card_text(self.rec_card, f"🏆 TOP SOURCING RECOMMENDATION:\nBased on our AI Scorecard algorithm, {best_supplier} is the highly recommended choice for {best['product']} with an overall score of {best['score']}/100. They offer a highly competitive price of ${float(best['price']):.5f}/pc, MOQ of {best['moq'] or 'N/A'}, and lead time of {best['lead_time'] or 'N/A'} with a risk level of: {best['risk'] or 'N/A'}.")
+
+        # Select first row by default to display radar chart
+        children = self.scorecard_tree.get_children()
+        if children:
+            self.scorecard_tree.selection_set(children[0])
+            self.on_scorecard_select(None)
 
     def calculate_supplier_scorecard(self):
         if not hasattr(self, 'scorecard_category_cb'):
@@ -3272,7 +3279,11 @@ class App(ctk.CTk):
                 "lead_time": r.get("lead_time"),
                 "risk": r.get("sourcing_risk"),
                 "score": int(round(total_score)),
-                "stars": star_rating
+                "stars": star_rating,
+                "price_score": int(round(price_score)),
+                "lead_score": int(round(lt_score)),
+                "moq_score": int(round(moq_score)),
+                "risk_score": int(round(risk_score))
             })
             
         scorecard.sort(key=lambda x: x["score"], reverse=True)
@@ -5668,6 +5679,70 @@ AI TARIFF & COMPLIANCE DETAIL:
             self.uae_customs_output.configure(state="disabled")
 
         threading.Thread(target=run_ai_classification, daemon=True).start()
+
+    def on_scorecard_select(self, event):
+        selected = self.scorecard_tree.selection()
+        if not selected:
+            return
+        item = self.scorecard_tree.item(selected[0])
+        vals = item.get("values")
+        if not vals:
+            return
+            
+        supplier = vals[1]
+        prod = vals[2]
+        
+        matrix = self.calculate_supplier_scorecard()
+        for row in matrix:
+            if self.clean_supplier_name(row["supplier"]) == supplier and row["product"] == prod:
+                self.draw_scorecard_radar_chart(
+                    supplier,
+                    row.get("price_score", 80),
+                    row.get("lead_score", 80),
+                    row.get("moq_score", 80),
+                    row.get("risk_score", 80)
+                )
+                break
+
+    def draw_scorecard_radar_chart(self, supplier_name, price_score, lead_score, moq_score, risk_score):
+        if hasattr(self, 'radar_canvas_frame'):
+            self.radar_canvas_frame.destroy()
+
+        self.radar_canvas_frame = ctk.CTkFrame(self.scorecard_sim_frame, fg_color="transparent")
+        self.radar_canvas_frame.grid(row=10, column=0, padx=15, pady=10, sticky="nsew")
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        labels = np.array(['Price', 'Speed', 'MOQ', 'Compliance'])
+        stats = np.array([price_score, lead_score, moq_score, risk_score])
+
+        angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
+        stats = np.concatenate((stats,[stats[0]]))
+        angles = np.concatenate((angles,[angles[0]]))
+
+        fig, ax = plt.subplots(figsize=(2.2, 2.2), subplot_kw=dict(polar=True), dpi=100)
+        fig.patch.set_facecolor('#2b2b2b')
+        ax.set_facecolor('#2b2b2b')
+
+        ax.plot(angles, stats, color='#1f538d', linewidth=2)
+        ax.fill(angles, stats, color='#1f538d', alpha=0.25)
+
+        ax.set_thetagrids(np.degrees(angles[:-1]), labels, color='white', fontsize=8)
+        ax.set_ylim(0, 100)
+        ax.set_rgrids([25, 50, 75, 100], angle=0, colors='grey', size=7)
+        ax.tick_params(colors='white')
+        
+        ax.spines['polar'].set_visible(False)
+        ax.grid(color='#4c4c4c', linestyle='--')
+
+        ax.set_title(f"Strengths: {supplier_name[:12]}", color='white', fontsize=9, pad=10)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.radar_canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def setup_visual_search_tab(self):
         tab_search = self.tabview.tab("🔍 AI Visual Search")
