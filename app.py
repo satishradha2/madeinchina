@@ -168,6 +168,17 @@ def init_db():
             logged_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Table for supplier quote historical price trend tracking
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS price_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier TEXT,
+            product TEXT,
+            price REAL,
+            log_date TEXT DEFAULT (date('now'))
+        )
+    """)
     conn.commit()
     
     # Auto-populate contacts from existing quotes
@@ -423,6 +434,7 @@ class App(ctk.CTk):
         tab_charts = self.sourcing_tabview.add("📈 Visual Charts")
         tab_insights = self.sourcing_tabview.add("💡 AI Sourcing Insights")
         tab_hedge = self.sourcing_tabview.add("💵 Currency Hedging")
+        tab_history = self.sourcing_tabview.add("📈 Price History")
 
         # Split frame layout inside Quotes Comparison tab
         tab_comp.grid_columnconfigure(0, weight=0, minsize=260)
@@ -509,6 +521,7 @@ class App(ctk.CTk):
         self.rfqs_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_rfq = self.rfqs_tabview.add("📝 RFQ Generator")
+        tab_neg = self.rfqs_tabview.add("💬 AI Negotiation")
 
         # ---------------------------------------------
         # 5. Workspace: Customs & AI Search
@@ -518,6 +531,7 @@ class App(ctk.CTk):
         
         tab_search = self.search_tabview.add("🔍 AI Visual Search")
         tab_uae = self.search_tabview.add("🇦🇪 UAE Customs & HS Code")
+        tab_barriers = self.search_tabview.add("🌍 Global Trade Barriers")
 
         # ---------------------------------------------
         # 6. Workspace: Settings & System
@@ -745,6 +759,15 @@ class App(ctk.CTk):
 
         # Setup PO Generator tab
         self.setup_po_generator_tab()
+
+        # Setup Price History & Trend Tracker tab
+        self.setup_price_history_tab()
+
+        # Setup AI Negotiation tab
+        self.setup_ai_negotiation_tab()
+
+        # Setup Global Trade Barriers tab
+        self.setup_global_barriers_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
         self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
@@ -1323,6 +1346,12 @@ class App(ctk.CTk):
             self.load_incident_logs()
         if hasattr(self, 'cny_slider'):
             self.draw_hedge_chart()
+        if hasattr(self, 'hist_supplier_cb'):
+            self.load_price_history_dropdowns()
+        if hasattr(self, 'neg_supplier_cb'):
+            self.load_negotiation_dropdowns()
+        if hasattr(self, 'barrier_category_cb'):
+            self.load_barrier_categories()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -6545,8 +6574,14 @@ Sourcing Action Guidance:
         self.inc_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
         scroll_y.grid(row=0, column=1, sticky="ns", pady=10, padx=(0, 10))
 
-        btn_delete = ctk.CTkButton(right_frame, text="🗑 Delete Selected Log", fg_color="#a83232", hover_color="#8c2626", command=self.delete_incident_log)
-        btn_delete.grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+        btn_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        btn_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+        
+        btn_delete = ctk.CTkButton(btn_frame, text="🗑 Delete Selected Log", fg_color="#a83232", hover_color="#8c2626", command=self.delete_incident_log)
+        btn_delete.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        btn_scar = ctk.CTkButton(btn_frame, text="📄 Generate SCAR PDF", fg_color="#1f538d", hover_color="#153e6b", command=self.export_scar_pdf)
+        btn_scar.pack(side="right", fill="x", expand=True, padx=(5, 0))
 
         self.load_incident_logs()
 
@@ -7112,6 +7147,643 @@ Authorized Signature: ___________________________
             self.grid_columnconfigure(2, minsize=360, weight=0)
             self.btn_toggle_preview.configure(fg_color="#1f538d", text="📄 Hide Preview")
             self.document_preview_visible = True
+
+    def setup_price_history_tab(self):
+        tab_history = self.sourcing_tabview.tab("📈 Price History")
+        tab_history.grid_columnconfigure(0, weight=1)
+        tab_history.grid_columnconfigure(1, weight=2)
+        tab_history.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_history, text="Supplier Historical Price Trend Tracker", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Log Price Point Form ---
+        left_frame = ctk.CTkFrame(tab_history)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left_frame, text="📈 Log Historical Price", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Select Supplier:").pack(padx=15, pady=(5, 2), anchor="w")
+        self.hist_supplier_cb = ctk.CTkComboBox(left_frame, values=["Select Supplier"], command=self.on_history_supplier_selected, width=230)
+        self.hist_supplier_cb.pack(padx=15, pady=2, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Select Product:").pack(padx=15, pady=(5, 2), anchor="w")
+        self.hist_product_cb = ctk.CTkComboBox(left_frame, values=["Select Product"], command=lambda choice: self.draw_price_history_chart(), width=230)
+        self.hist_product_cb.pack(padx=15, pady=2, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Historical Unit Price (USD):").pack(padx=15, pady=(5, 2), anchor="w")
+        self.hist_price_entry = ctk.CTkEntry(left_frame, placeholder_text="e.g. 0.0520", width=230)
+        self.hist_price_entry.pack(padx=15, pady=2, anchor="w")
+
+        ctk.CTkLabel(left_frame, text="Log Date (YYYY-MM-DD):").pack(padx=15, pady=(5, 2), anchor="w")
+        self.hist_date_entry = ctk.CTkEntry(left_frame, placeholder_text="e.g. 2026-03-15", width=230)
+        self.hist_date_entry.pack(padx=15, pady=2, anchor="w")
+        import datetime
+        self.hist_date_entry.insert(0, datetime.date.today().strftime("%Y-%m-%d"))
+
+        btn_add_pt = ctk.CTkButton(left_frame, text="📈 Log Price Point", fg_color="#1f538d", hover_color="#153e6b", command=self.add_historical_price)
+        btn_add_pt.pack(padx=15, pady=20, fill="x")
+
+        # --- RIGHT PANEL: Visual Line Chart Canvas ---
+        self.hist_chart_frame = ctk.CTkFrame(tab_history, fg_color="#2b2b2b")
+        self.hist_chart_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        self.hist_chart_frame.grid_columnconfigure(0, weight=1)
+        self.hist_chart_frame.grid_rowconfigure(0, weight=1)
+
+        self.load_price_history_dropdowns()
+
+    def load_price_history_dropdowns(self):
+        suppliers = set()
+        for r in self.extracted_data:
+            s = r.get("supplier")
+            if s and s != "Unknown":
+                suppliers.add(s)
+        sorted_sups = sorted(list(suppliers))
+        if hasattr(self, 'hist_supplier_cb'):
+            self.hist_supplier_cb.configure(values=sorted_sups)
+            if sorted_sups:
+                self.hist_supplier_cb.set(sorted_sups[0])
+                self.on_history_supplier_selected(sorted_sups[0])
+
+    def on_history_supplier_selected(self, choice):
+        products = set()
+        for r in self.extracted_data:
+            if r.get("supplier") == choice:
+                p = (r.get("product") or "").strip().title()
+                if p:
+                    products.add(p)
+        sorted_prods = sorted(list(products))
+        if hasattr(self, 'hist_product_cb'):
+            self.hist_product_cb.configure(values=sorted_prods)
+            if sorted_prods:
+                self.hist_product_cb.set(sorted_prods[0])
+                self.draw_price_history_chart()
+
+    def add_historical_price(self):
+        supplier = self.hist_supplier_cb.get()
+        product = self.hist_product_cb.get()
+        date_val = self.hist_date_entry.get().strip()
+        try:
+            price_val = float(self.hist_price_entry.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Please enter a valid numeric historical price!")
+            return
+
+        if not supplier or supplier == "Select Supplier" or not product or product == "Select Product":
+            messagebox.showwarning("Warning", "Please select a supplier and product first!")
+            return
+        
+        import re
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_val):
+            messagebox.showerror("Error", "Date must be in YYYY-MM-DD format!")
+            return
+
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO price_history (supplier, product, price, log_date)
+                VALUES (?, ?, ?, ?)
+            """, (supplier, product, price_val, date_val))
+            conn.commit()
+            conn.close()
+
+            self.hist_price_entry.delete(0, tk.END)
+            messagebox.showinfo("Success", f"Logged historical price point of ${price_val:.4f} on {date_val}!")
+            self.draw_price_history_chart()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to log price point: {e}")
+
+    def draw_price_history_chart(self):
+        for w in self.hist_chart_frame.winfo_children():
+            w.destroy()
+
+        supplier = self.hist_supplier_cb.get() if hasattr(self, 'hist_supplier_cb') else ""
+        product = self.hist_product_cb.get() if hasattr(self, 'hist_product_cb') else ""
+
+        if not supplier or supplier == "Select Supplier" or not product or product == "Select Product":
+            ctk.CTkLabel(self.hist_chart_frame, text="Select supplier and product to view historical price trend.", text_color="grey").pack(pady=50)
+            return
+
+        current_price = None
+        for r in self.extracted_data:
+            if r.get("supplier") == supplier and (r.get("product") or "").strip().title() == product:
+                try:
+                    current_price = float(r["price"])
+                except Exception:
+                    pass
+                break
+
+        history_points = []
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                SELECT log_date, price FROM price_history 
+                WHERE supplier = ? AND product = ? 
+                ORDER BY log_date ASC
+            """, (supplier, product))
+            history_points = c.fetchall()
+            conn.close()
+        except Exception as e:
+            print("Failed to query historical price points:", e)
+
+        dates = []
+        prices = []
+        for d, p in history_points:
+            dates.append(d)
+            prices.append(p)
+
+        import datetime
+        if current_price is not None:
+            today_str = datetime.date.today().strftime("%Y-%m-%d")
+            if today_str not in dates:
+                dates.append(today_str)
+                prices.append(current_price)
+
+        if len(prices) < 2:
+            if len(prices) == 1:
+                dates.insert(0, "2026-05-01")
+                prices.insert(0, prices[0])
+            else:
+                ctk.CTkLabel(self.hist_chart_frame, text="No price points available to plot trend.", text_color="grey").pack(pady=50)
+                return
+
+        fig, ax = plt.subplots(figsize=(6, 4), facecolor='#2b2b2b')
+        ax.set_facecolor('#2b2b2b')
+
+        ax.plot(dates, prices, marker='o', linestyle='-', color='#1f538d', linewidth=2.5, markersize=8, label="Unit Cost (USD)")
+        
+        pct_change = ((prices[-1] - prices[0]) / prices[0]) * 100
+        trend_color = "#2da832" if pct_change <= 0 else "#a83232"
+        ax.plot([dates[0], dates[-1]], [prices[0], prices[-1]], linestyle='--', color=trend_color, alpha=0.5)
+
+        ax.set_ylabel('Unit Cost (USD)', color='white')
+        ax.set_title(f'Quote Price Trend: {supplier} ({product})', color='white', pad=15)
+        ax.tick_params(colors='white')
+        ax.grid(color='#4c4c4c', linestyle='--')
+        
+        plt.xticks(rotation=15, color='white')
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.hist_chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig)
+
+    def export_scar_pdf(self):
+        selected = self.inc_tree.selection()
+        if not selected:
+            messagebox.showwarning("Warning", "Please select an incident log from the table first!")
+            return
+
+        item = self.inc_tree.item(selected[0])
+        val = item["values"]
+        
+        log_id = val[0]
+        supplier = val[1]
+        inc_type = val[2]
+        desc = val[3]
+        severity = val[4]
+        date_logged = val[5]
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf", 
+            filetypes=[("PDF files", "*.pdf")], 
+            initialfile=f"SCAR_{supplier.replace(' ', '_')}_{log_id}.pdf"
+        )
+        if not file_path:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib import colors
+
+            doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+            story = []
+            styles = getSampleStyleSheet()
+
+            primary_color = colors.HexColor("#bf3b3b")
+            text_color = colors.HexColor("#333333")
+
+            title_style = ParagraphStyle(
+                'SCARTitle',
+                parent=styles['Heading1'],
+                fontName='Helvetica-Bold',
+                fontSize=22,
+                textColor=primary_color,
+                spaceAfter=15
+            )
+
+            meta_style = ParagraphStyle(
+                'SCARMeta',
+                parent=styles['Normal'],
+                fontName='Helvetica',
+                fontSize=11,
+                textColor=text_color,
+                leading=14
+            )
+
+            box_title_style = ParagraphStyle(
+                'SCARBoxTitle',
+                parent=styles['Normal'],
+                fontName='Helvetica-Bold',
+                fontSize=11,
+                textColor=colors.white
+            )
+
+            story.append(Paragraph("SUPPLIER CORRECTIVE ACTION REQUEST (SCAR)", title_style))
+            story.append(Spacer(1, 10))
+
+            meta_data = [
+                [
+                    Paragraph(f"<b>SCAR Reference ID:</b> SCAR-{log_id}<br/><b>Supplier Name:</b> {supplier}<br/><b>Date Logged:</b> {date_logged}", meta_style),
+                    Paragraph(f"<b>Incident Type:</b> {inc_type}<br/><b>Severity Rating:</b> {severity}<br/><b>Status:</b> PENDING ROOT CAUSE", meta_style)
+                ]
+            ]
+            meta_table = Table(meta_data, colWidths=[270, 270])
+            meta_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('PADDING', (0,0), (-1,-1), 0),
+            ]))
+            story.append(meta_table)
+            story.append(Spacer(1, 20))
+
+            story.append(Paragraph("<b>1. Description of Non-Conformance / Quality Incident:</b>", meta_style))
+            desc_table = Table([[Paragraph(desc, meta_style)]], colWidths=[540])
+            desc_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#f9f9f9")),
+                ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#dcdcdc")),
+                ('PADDING', (0,0), (-1,-1), 12),
+            ]))
+            story.append(desc_table)
+            story.append(Spacer(1, 20))
+
+            sections = [
+                ("2. Containment Action & Immediate Correction Plan (Required in 24 Hours)", "Describe actions taken to isolate defective stock, notify freight forwarders, or suspend production line."),
+                ("3. Root Cause Investigation & 5-Why Analysis (Required in 7 Business Days)", "Identify the exact systemic or operational failure (e.g. raw material, machinery tolerance, testing failure)."),
+                ("4. Preventive & Corrective Actions Plan (Required in 14 Business Days)", "Define permanent steps to prevent recurrence (e.g. updating standard operating procedures, operator training, calibration schedules).")
+            ]
+
+            for s_title, s_placeholder in sections:
+                header_t = Table([[Paragraph(s_title, box_title_style)]], colWidths=[540])
+                header_t.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#333333")),
+                    ('PADDING', (0,0), (-1,-1), 6),
+                ]))
+                story.append(header_t)
+
+                body_t = Table([[Paragraph(f"<font color='grey'><i>{s_placeholder}</i></font><br/><br/><br/><br/><br/>", meta_style)]], colWidths=[540])
+                body_t.setStyle(TableStyle([
+                    ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#333333")),
+                    ('PADDING', (0,0), (-1,-1), 10),
+                ]))
+                story.append(body_t)
+                story.append(Spacer(1, 15))
+
+            story.append(Spacer(1, 20))
+            sig_data = [
+                [
+                    Paragraph("<b>ProcureAI Quality Auditor Signature:</b><br/>___________________________", meta_style),
+                    Paragraph("<b>Supplier Representative Signature:</b><br/>___________________________", meta_style)
+                ]
+            ]
+            sig_table = Table(sig_data, colWidths=[270, 270])
+            sig_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('PADDING', (0,0), (-1,-1), 0),
+            ]))
+            story.append(sig_table)
+
+            doc.build(story)
+            messagebox.showinfo("Success", f"SCAR Corrective Action PDF generated successfully at:\n{file_path}!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate SCAR PDF: {e}")
+
+    def setup_ai_negotiation_tab(self):
+        tab_neg = self.rfqs_tabview.tab("💬 AI Negotiation")
+        tab_neg.grid_columnconfigure(0, weight=1)
+        tab_neg.grid_columnconfigure(1, weight=1)
+        tab_neg.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_neg, text="AI Sourcing Target-Price Negotiation Agent", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Parameters configuration ---
+        left_frame = ctk.CTkFrame(tab_neg)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="💬 Sourcing Targets", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, pady=10, padx=15, sticky="w")
+
+        # Supplier Choice
+        ctk.CTkLabel(left_frame, text="Select Supplier:").grid(row=1, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.neg_supplier_cb = ctk.CTkComboBox(left_frame, values=["Select Supplier"], command=self.on_neg_supplier_selected)
+        self.neg_supplier_cb.grid(row=1, column=1, padx=15, pady=2, sticky="ew")
+
+        # Product Choice
+        ctk.CTkLabel(left_frame, text="Select Product:").grid(row=2, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.neg_product_cb = ctk.CTkComboBox(left_frame, values=["Select Product"])
+        self.neg_product_cb.grid(row=2, column=1, padx=15, pady=2, sticky="ew")
+
+        # Target Discount
+        ctk.CTkLabel(left_frame, text="Target Discount (%):").grid(row=3, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.neg_discount_entry = ctk.CTkEntry(left_frame)
+        self.neg_discount_entry.grid(row=3, column=1, padx=15, pady=2, sticky="ew")
+        self.neg_discount_entry.insert(0, "15")
+
+        # Target Payment terms
+        ctk.CTkLabel(left_frame, text="Propose Payment Term:").grid(row=4, column=0, padx=15, pady=(5, 2), sticky="w")
+        self.neg_payment_entry = ctk.CTkEntry(left_frame)
+        self.neg_payment_entry.grid(row=4, column=1, padx=15, pady=2, sticky="ew")
+        self.neg_payment_entry.insert(0, "100% Letter of Credit (L/C) at sight / Net 30")
+
+        # Action Buttons
+        self.btn_neg_draft = ctk.CTkButton(left_frame, text="💬 Draft AI Sourcing Email", command=self.run_ai_negotiation_draft, fg_color="#1f538d", hover_color="#153e6b")
+        self.btn_neg_draft.grid(row=5, column=0, columnspan=2, padx=15, pady=25, sticky="ew")
+
+        # --- RIGHT PANEL: Live Draft Output ---
+        right_frame = ctk.CTkFrame(tab_neg)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📄 Persuasive Email Draft", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, pady=10, padx=15, sticky="w")
+
+        self.neg_preview_box = ctk.CTkTextbox(right_frame, wrap="word")
+        self.neg_preview_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+
+        # Bottom Actions row
+        ctrl_fr = ctk.CTkFrame(right_frame, fg_color="transparent")
+        ctrl_fr.grid(row=2, column=0, padx=15, pady=(0, 15), sticky="ew")
+
+        btn_copy = ctk.CTkButton(ctrl_fr, text="📋 Copy Draft", command=lambda: self.copy_to_clipboard(self.neg_preview_box.get("1.0", "end-1c").strip()))
+        btn_copy.pack(side="left", fill="x", expand=True, padx=(0, 5))
+
+        btn_mail = ctk.CTkButton(ctrl_fr, text="✉ Open in Outlook", fg_color="#1f7d44", hover_color="#15592e", command=self.launch_neg_email_client)
+        btn_mail.pack(side="right", fill="x", expand=True, padx=(5, 0))
+
+        self.load_negotiation_dropdowns()
+
+    def load_negotiation_dropdowns(self):
+        suppliers = set()
+        for r in self.extracted_data:
+            s = r.get("supplier")
+            if s and s != "Unknown":
+                suppliers.add(s)
+        sorted_sups = sorted(list(suppliers))
+        if hasattr(self, 'neg_supplier_cb'):
+            self.neg_supplier_cb.configure(values=sorted_sups)
+            if sorted_sups:
+                self.neg_supplier_cb.set(sorted_sups[0])
+                self.on_neg_supplier_selected(sorted_sups[0])
+
+    def on_neg_supplier_selected(self, choice):
+        products = set()
+        for r in self.extracted_data:
+            if r.get("supplier") == choice:
+                p = (r.get("product") or "").strip().title()
+                if p:
+                    products.add(p)
+        sorted_prods = sorted(list(products))
+        if hasattr(self, 'neg_product_cb'):
+            self.neg_product_cb.configure(values=sorted_prods)
+            if sorted_prods:
+                self.neg_product_cb.set(sorted_prods[0])
+
+    def run_ai_negotiation_draft(self):
+        supplier = self.neg_supplier_cb.get()
+        product = self.neg_product_cb.get()
+        discount = self.neg_discount_entry.get().strip()
+        payment = self.neg_payment_entry.get().strip()
+
+        if not supplier or supplier == "Select Supplier" or not product or product == "Select Product":
+            messagebox.showwarning("Warning", "Please select a supplier and product first!")
+            return
+
+        active_quote = None
+        other_quotes = []
+        for r in self.extracted_data:
+            r_prod = (r.get("product") or "").strip().lower()
+            if r_prod == product.lower():
+                if r.get("supplier") == supplier:
+                    active_quote = r
+                else:
+                    other_quotes.append(r)
+
+        current_price = float(active_quote["price"]) if active_quote and active_quote.get("price") else 0.0
+        currency = active_quote.get("unit") or "USD"
+        moq = active_quote.get("moq") or "N/A"
+        lead_time = active_quote.get("lead_time") or "N/A"
+
+        competitor_prices = []
+        for o in other_quotes:
+            try:
+                competitor_prices.append(float(o["price"]))
+            except Exception:
+                pass
+        best_rival_price = min(competitor_prices) if competitor_prices else None
+
+        self.btn_neg_draft.configure(state="disabled", text="AI Sourcing Agent drafting...")
+        self.update()
+
+        def draft_thread():
+            competitor_clause = ""
+            if best_rival_price is not None and best_rival_price < current_price:
+                competitor_clause = f"Please note that we have received competing quotations for this item as low as ${best_rival_price:.4f}/{currency}."
+
+            prompt = f"""
+            Draft a highly professional, persuasive supplier target-price negotiation email to:
+            - Supplier Name: {supplier}
+            - Product Item: {product}
+            - Current Quoted Price: {current_price:.4f} {currency}
+            - Target Discount requested: {discount}% (Target price: {current_price * (1 - float(discount)/100.0 if discount.isdigit() else 0.85):.4f})
+            - Target Payment Terms: {payment}
+            - Quoted MOQ: {moq}
+            - Quoted Lead Time: {lead_time}
+            
+            Persuasion strategy:
+            - Be extremely polite, respectful, and emphasize a long-term business relationship.
+            - Leverage: {competitor_clause} If competitors offer better pricing, suggest that matching or narrowing the gap will secure the volume order.
+            - Offer to increase volume commitments or guarantee repeat quarterly orders if target price is matched.
+            - Request confirmation of lead time and technical sample availability.
+            
+            Format the output strictly as a ready-to-send corporate email with Subject, Salutation, Body, and Sign-off block. Do not include markdown syntax.
+            """
+
+            try:
+                result_text = self.generate_with_fallback([], prompt, json_response=False)
+                self.after(0, lambda: display_draft(result_text))
+            except Exception as e:
+                self.after(0, lambda err=e: display_draft(f"Failed to draft negotiation email:\n{err}"))
+            finally:
+                self.after(0, lambda: self.btn_neg_draft.configure(state="normal", text="💬 Draft AI Sourcing Email"))
+
+        def display_draft(text):
+            self.neg_preview_box.configure(state="normal")
+            self.neg_preview_box.delete("1.0", tk.END)
+            self.neg_preview_box.insert("1.0", text)
+            self.neg_preview_box.configure(state="disabled")
+
+        threading.Thread(target=draft_thread, daemon=True).start()
+
+    def launch_neg_email_client(self):
+        body = self.neg_preview_box.get("1.0", "end-1c").strip()
+        if not body or "persuasive" in body.lower() or "draft" in body.lower():
+            messagebox.showwarning("Warning", "Please draft the email first!")
+            return
+        
+        supplier = self.neg_supplier_cb.get()
+        contact_email = "sales@supplier.com"
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT contact_info FROM supplier_contacts WHERE supplier = ?", (supplier,))
+            row = c.fetchone()
+            if row and "@" in row[0]:
+                import re
+                emails = re.findall(r'[\w\.-]+@[\w\.-]+', row[0])
+                if emails:
+                    contact_email = emails[0]
+            conn.close()
+        except Exception:
+            pass
+
+        import urllib.parse
+        import webbrowser
+        subject = f"Supplier Price Negotiation: {self.neg_product_cb.get()}"
+        mail_url = f"mailto:{contact_email}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+        webbrowser.open(mail_url)
+
+    def setup_global_barriers_tab(self):
+        tab_barriers = self.search_tabview.tab("🌍 Global Trade Barriers")
+        tab_barriers.grid_columnconfigure(0, weight=1)
+        tab_barriers.grid_columnconfigure(1, weight=1)
+        tab_barriers.grid_rowconfigure(1, weight=1)
+
+        # Header Title
+        title_lbl = ctk.CTkLabel(tab_barriers, text="Global Sourcing Regulatory Barriers & Customs warnings", font=ctk.CTkFont(size=20, weight="bold"))
+        title_lbl.grid(row=0, column=0, columnspan=2, padx=20, pady=(15, 10), sticky="w")
+
+        # --- LEFT PANEL: Configuration Inputs ---
+        left_frame = ctk.CTkFrame(tab_barriers)
+        left_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text="🌍 Import Compliance parameters", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="w")
+
+        # Product Dropdown Category
+        ctk.CTkLabel(left_frame, text="Product Category:").grid(row=1, column=0, padx=15, pady=5, sticky="w")
+        self.barrier_category_cb = ctk.CTkComboBox(left_frame, values=["Custom"])
+        self.barrier_category_cb.grid(row=1, column=1, padx=15, pady=5, sticky="ew")
+
+        # Custom Product Input Name
+        ctk.CTkLabel(left_frame, text="Or Custom Product:").grid(row=2, column=0, padx=15, pady=5, sticky="w")
+        self.barrier_custom_name = ctk.CTkEntry(left_frame, placeholder_text="e.g. PPE Masks / Laser Cutter")
+        self.barrier_custom_name.grid(row=2, column=1, padx=15, pady=5, sticky="ew")
+
+        # Destination country
+        ctk.CTkLabel(left_frame, text="Destination Country:").grid(row=3, column=0, padx=15, pady=5, sticky="w")
+        self.barrier_dest_cb = ctk.CTkComboBox(left_frame, values=["United Arab Emirates", "Saudi Arabia", "Qatar", "Oman", "Kuwait", "European Union"])
+        self.barrier_dest_cb.grid(row=3, column=1, padx=15, pady=5, sticky="ew")
+        self.barrier_dest_cb.set("Saudi Arabia")
+
+        # HS Code
+        ctk.CTkLabel(left_frame, text="HS Code (Optional):").grid(row=4, column=0, padx=15, pady=5, sticky="w")
+        self.barrier_hs_entry = ctk.CTkEntry(left_frame, placeholder_text="6-digit code, e.g. 630790")
+        self.barrier_hs_entry.grid(row=4, column=1, padx=15, pady=5, sticky="ew")
+
+        self.btn_run_barriers = ctk.CTkButton(left_frame, text="🔍 Check Import Restrictions", fg_color="#1f538d", hover_color="#153e6b", command=self.run_global_trade_restrictions_scan)
+        self.btn_run_barriers.grid(row=5, column=0, columnspan=2, padx=15, pady=25, sticky="ew")
+
+        # --- RIGHT PANEL: Compliance report output ---
+        right_frame = ctk.CTkFrame(tab_barriers)
+        right_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text="📋 AI Trade Restrictions Compliance Report", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, pady=10, padx=15, sticky="w")
+
+        self.barrier_output_box = ctk.CTkTextbox(right_frame, wrap="word")
+        self.barrier_output_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+
+        self.load_barrier_categories()
+
+    def load_barrier_categories(self):
+        products = set()
+        for r in self.extracted_data:
+            prod = (r.get("product") or "").strip().title()
+            if prod:
+                products.add(prod)
+        sorted_prods = ["Custom"] + sorted(list(products))
+        if hasattr(self, 'barrier_category_cb'):
+            self.barrier_category_cb.configure(values=sorted_prods)
+            self.barrier_category_cb.set(sorted_prods[0])
+
+    def run_global_trade_restrictions_scan(self):
+        choice = self.barrier_category_cb.get()
+        custom = self.barrier_custom_name.get().strip()
+        dest = self.barrier_dest_cb.get()
+        hs_code = self.barrier_hs_entry.get().strip()
+
+        prod_name = custom if choice == "Custom" else choice
+        if not prod_name:
+            messagebox.showwarning("Warning", "Please select a category or enter a custom product name!")
+            return
+
+        self.btn_run_barriers.configure(state="disabled", text="AI compliance scan in progress...")
+        self.update()
+
+        def scan_thread():
+            ai_prompt = f"""
+            Perform a trade compliance audit and import restrictions scan for:
+            - Product: {prod_name}
+            - Destination Country: {dest}
+            - HS Code: {hs_code if hs_code else "Unknown / Auto-detect"}
+            
+            Determine:
+            1. Prohibited & Restricted status (Is the item banned, requires special import permits, or restricted by ministries?).
+            2. Anti-Dumping & Countervailing Duties (Check if there are protective tariff penalties on origin countries, specifically from China to this destination).
+            3. Regulatory Conformity Requirements (e.g. SABER / SASO certificate of conformity for Saudi Arabia, G-Mark for GCC toy/low-voltage electricals, CE / REACH for EU, MoH approvals for medical devices).
+            4. Sourcing Risk Warnings (e.g. customs seizure risks, delay points in documentation, required certificates of origin or legalization steps).
+            
+            Write the output in a clean, highly structured compliance report.
+            Do not use markdown syntax. Make it look like a formal government trade advisory.
+            """
+
+            try:
+                result_text = self.generate_with_fallback([], ai_prompt, json_response=False)
+                
+                header_report = f"""==================================================
+🌍 GLOBAL IMPORT REGULATORY COMPLIANCE REPORT
+==================================================
+TARGET PRODUCT : {prod_name}
+DESTINATION    : {dest}
+HS CODE        : {hs_code if hs_code else "AUTO-DETECTED"}
+--------------------------------------------------
+AUDIT & REGULATORY WARNING DETAILS:
+{result_text}
+"""
+                self.after(0, lambda: display_report(header_report))
+            except Exception as e:
+                self.after(0, lambda err=e: display_report(f"Failed to scan global barriers:\n{err}"))
+            finally:
+                self.after(0, lambda: self.btn_run_barriers.configure(state="normal", text="🔍 Check Import Restrictions"))
+
+        def display_report(text):
+            self.barrier_output_box.configure(state="normal")
+            self.barrier_output_box.delete("1.0", tk.END)
+            self.barrier_output_box.insert("1.0", text)
+            self.barrier_output_box.configure(state="disabled")
+
+        threading.Thread(target=scan_thread, daemon=True).start()
 
 if __name__ == "__main__":
     app = App()
