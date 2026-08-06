@@ -1319,16 +1319,18 @@ class App(ctk.CTk):
 
         self.dashboard_cards_frame = ctk.CTkFrame(page, fg_color="transparent")
         self.dashboard_cards_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 10))
-        for idx in range(6):
+        for idx in range(8):
             self.dashboard_cards_frame.grid_columnconfigure(idx, weight=1, uniform="dash_cards")
 
         self.dashboard_cards = {}
         card_specs = [
-            ("quotes", "Quote Rows", "0"),
-            ("suppliers", "Suppliers", "0"),
-            ("best", "Best Unit Price", "N/A"),
             ("review", "Needs Review", "0"),
             ("approved", "Approved", "0"),
+            ("rfq_open", "Open RFQs", "0"),
+            ("po_open", "Open POs", "0"),
+            ("po_value", "Open PO Value", "$0"),
+            ("quotes", "Quote Rows", "0"),
+            ("suppliers", "Suppliers", "0"),
             ("expired", "Expired Quotes", "0"),
         ]
         for idx, (key, title, value) in enumerate(card_specs):
@@ -1341,7 +1343,7 @@ class App(ctk.CTk):
             )
             card.grid(row=0, column=idx, sticky="nsew", padx=6)
             ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["muted"]).pack(anchor="w", padx=14, pady=(12, 2))
-            value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=self.THEME["text"])
+            value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"])
             value_lbl.pack(anchor="w", padx=14, pady=(0, 12))
             self.dashboard_cards[key] = value_lbl
 
@@ -1354,34 +1356,58 @@ class App(ctk.CTk):
         left = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         left.grid(row=0, column=0, sticky="nsew", padx=(6, 8), pady=6)
         left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(left, text="Recent Quote Activity", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+        left.grid_rowconfigure(2, weight=1)
 
-        cols = ("supplier", "product", "price", "status")
-        self.dashboard_recent_tree = ttk.Treeview(left, columns=cols, show="headings", style="Treeview")
+        left_header = ctk.CTkFrame(left, fg_color="transparent")
+        left_header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        left_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(left_header, text="Quote Approval Queue", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        self.make_button(left_header, "Open Quotes", command=self.open_dashboard_quote_in_quotes, variant="secondary", width=96).grid(row=0, column=1, padx=4)
+        self.make_button(left_header, "Approve", command=lambda: self.update_dashboard_selected_quote("Approved"), variant="success", width=82).grid(row=0, column=2, padx=4)
+        self.make_button(left_header, "Reject", command=lambda: self.update_dashboard_selected_quote("Rejected"), variant="danger", width=74).grid(row=0, column=3, padx=4)
+        self.make_button(left_header, "Send to RFQ", command=self.send_dashboard_quote_to_rfq, variant="primary", width=92).grid(row=0, column=4, padx=4)
+
+        ctk.CTkLabel(
+            left,
+            text="Review quote rows before they can feed downstream purchase orders.",
+            font=ctk.CTkFont(size=11),
+            text_color=self.THEME["muted"],
+        ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 6))
+
+        cols = ("id", "supplier", "product", "price", "issue")
+        self.dashboard_approval_tree = ttk.Treeview(left, columns=cols, show="headings", style="Treeview")
         for col, label, width in [
+            ("id", "ID", 55),
             ("supplier", "Supplier", 210),
             ("product", "Product", 150),
             ("price", "Unit Price", 90),
-            ("status", "Status", 140),
+            ("issue", "Review Warning", 230),
         ]:
-            self.dashboard_recent_tree.heading(col, text=label)
-            self.dashboard_recent_tree.column(col, width=width, anchor="w")
-        self.dashboard_recent_tree.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+            self.dashboard_approval_tree.heading(col, text=label)
+            self.dashboard_approval_tree.column(col, width=width, anchor="w")
+        self.dashboard_approval_tree.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        self.dashboard_approval_tree.tag_configure("needs_review", background="#FEF3C7", foreground="#92400E")
+        self.dashboard_approval_tree.bind("<Double-1>", lambda event: self.open_dashboard_quote_in_quotes())
 
         right = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 6), pady=6)
         right.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(right, text="Recommended Next Actions", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+        right.grid_rowconfigure(1, weight=2)
+        right.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(right, text="Workflow Audit Timeline", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+        self.dashboard_timeline_box = ctk.CTkTextbox(right, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.dashboard_timeline_box.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 12))
+
+        ctk.CTkLabel(right, text="Recommended Next Actions", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=2, column=0, sticky="w", padx=16, pady=(4, 8))
         self.dashboard_actions_box = ctk.CTkTextbox(right, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
-        self.dashboard_actions_box.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        right.grid_rowconfigure(1, weight=1)
+        self.dashboard_actions_box.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 16))
 
     def update_dashboard_page(self):
         if not hasattr(self, "dashboard_cards"):
             return
 
         data = self.extracted_data or []
+        workflow = self.get_workflow_dashboard_snapshot()
         suppliers = {self.clean_supplier_name(r.get("supplier")) for r in data if r.get("supplier") and r.get("supplier") != "Unknown"}
         decision_data = self.get_decision_quotes(data) if data else []
         numeric_prices = []
@@ -1410,27 +1436,35 @@ class App(ctk.CTk):
         high_risk = [r for r in data if "high" in str(r.get("sourcing_risk") or "").lower()]
         needs_review = [r for r in data if (r.get("review_status") or "Needs Review") == "Needs Review"]
         approved = [r for r in data if r.get("review_status") == "Approved"]
-        best_price = min(numeric_prices, key=lambda item: item[0])[0] if numeric_prices else None
 
         self.dashboard_cards["quotes"].configure(text=str(len(data)))
         self.dashboard_cards["suppliers"].configure(text=str(len(suppliers)))
-        self.dashboard_cards["best"].configure(text=f"${best_price:.5f}" if best_price is not None else "N/A")
         self.dashboard_cards["review"].configure(text=str(len(needs_review)), text_color=self.THEME["warning"] if needs_review else self.THEME["text"])
         self.dashboard_cards["approved"].configure(text=str(len(approved)), text_color=self.THEME["success"] if approved else self.THEME["text"])
         self.dashboard_cards["expired"].configure(text=str(expired_count), text_color=self.THEME["danger"] if expired_count else self.THEME["text"])
+        self.dashboard_cards["rfq_open"].configure(text=str(workflow["open_rfqs"]), text_color=self.THEME["primary"] if workflow["open_rfqs"] else self.THEME["text"])
+        self.dashboard_cards["po_open"].configure(text=str(workflow["open_pos"]), text_color=self.THEME["primary"] if workflow["open_pos"] else self.THEME["text"])
+        self.dashboard_cards["po_value"].configure(text=f"${workflow['open_po_value']:,.0f}", text_color=self.THEME["success"] if workflow["open_po_value"] else self.THEME["text"])
 
-        self.dashboard_recent_tree.delete(*self.dashboard_recent_tree.get_children())
-        for r in list(reversed(data))[:12]:
+        self.dashboard_approval_tree.delete(*self.dashboard_approval_tree.get_children())
+        review_rows = sorted(needs_review, key=lambda row: self.quote_review_priority(row), reverse=True)[:18]
+        for r in review_rows:
             price = r.get("price")
             try:
                 price_txt = f"${float(price):.5f}"
             except Exception:
                 price_txt = "N/A"
-            status = r.get("review_status") or "Needs Review"
-            self.dashboard_recent_tree.insert(
+            self.dashboard_approval_tree.insert(
                 "",
                 tk.END,
-                values=(self.clean_supplier_name(r.get("supplier")), r.get("product") or "N/A", price_txt, status),
+                values=(
+                    r.get("id"),
+                    self.clean_supplier_name(r.get("supplier")),
+                    r.get("product") or "N/A",
+                    price_txt,
+                    self.quote_warning_summary(r),
+                ),
+                tags=("needs_review",),
             )
 
         actions = []
@@ -1445,12 +1479,159 @@ class App(ctk.CTk):
         if active_count and numeric_prices:
             best_supplier = self.clean_supplier_name(min(numeric_prices, key=lambda item: item[0])[1].get("supplier"))
             actions.append(f"Use {best_supplier} as the first benchmark in negotiations based on lowest unit price.")
+        if workflow["open_rfqs"]:
+            actions.append(f"Follow up on {workflow['open_rfqs']} open RFQ record(s) until they are closed or cancelled.")
+        if workflow["open_pos"]:
+            actions.append(f"Track {workflow['open_pos']} active PO record(s) through supplier acceptance, shipment, and closure.")
         actions.append("Keep supplier contact records current before broadcasting RFQs.")
+
+        timeline_text = "\n\n".join(workflow["timeline"]) if workflow["timeline"] else "No RFQ, PO, or quote approval events have been logged yet."
+        self.dashboard_timeline_box.configure(state="normal")
+        self.dashboard_timeline_box.delete("1.0", tk.END)
+        self.dashboard_timeline_box.insert("1.0", timeline_text)
+        self.dashboard_timeline_box.configure(state="disabled")
 
         self.dashboard_actions_box.configure(state="normal")
         self.dashboard_actions_box.delete("1.0", tk.END)
         self.dashboard_actions_box.insert("1.0", "\n\n".join(f"- {a}" for a in actions))
         self.dashboard_actions_box.configure(state="disabled")
+
+    def get_workflow_dashboard_snapshot(self):
+        snapshot = {"open_rfqs": 0, "open_pos": 0, "open_po_value": 0.0, "timeline": []}
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM rfq_register WHERE status NOT IN ('Closed', 'Cancelled')")
+            snapshot["open_rfqs"] = c.fetchone()[0] or 0
+            c.execute("SELECT COUNT(*), COALESCE(SUM(total_value), 0) FROM po_register WHERE status NOT IN ('Closed', 'Cancelled')")
+            po_count, po_value = c.fetchone()
+            snapshot["open_pos"] = po_count or 0
+            snapshot["open_po_value"] = float(po_value or 0)
+
+            events = []
+            c.execute("""
+                SELECT created_at, workflow_type, workflow_id, action, status, note
+                FROM workflow_audit_log
+                ORDER BY datetime(created_at) DESC, id DESC
+                LIMIT 12
+            """)
+            for created_at, workflow_type, workflow_id, action, status, note in c.fetchall():
+                events.append((created_at, f"{created_at} | {workflow_type}-{workflow_id} | {action} -> {status}\n{note or ''}"))
+
+            c.execute("""
+                SELECT q.created_at, 'QUOTE', q.quote_id, q.action, q.new_status, COALESCE(e.supplier, ''), COALESCE(e.product, '')
+                FROM quote_audit_log q
+                LEFT JOIN extracted_quotes e ON e.id = q.quote_id
+                ORDER BY datetime(q.created_at) DESC, q.id DESC
+                LIMIT 8
+            """)
+            for created_at, workflow_type, quote_id, action, status, supplier, product in c.fetchall():
+                note = f"{supplier} / {product}".strip(" /")
+                events.append((created_at, f"{created_at} | {workflow_type}-{quote_id} | {action} -> {status}\n{note}"))
+
+            conn.close()
+            events.sort(key=lambda item: item[0] or "", reverse=True)
+            snapshot["timeline"] = [text for _, text in events[:12]]
+        except Exception as e:
+            snapshot["timeline"] = [f"Unable to load workflow timeline: {e}"]
+        return snapshot
+
+    def quote_review_priority(self, row):
+        score = 0
+        if not row.get("price"):
+            score += 4
+        if not row.get("moq") or str(row.get("moq")).upper() == "N/A":
+            score += 2
+        if not row.get("lead_time") or str(row.get("lead_time")).upper() == "N/A":
+            score += 2
+        if "high" in str(row.get("sourcing_risk") or "").lower():
+            score += 3
+        try:
+            import datetime
+            validity = datetime.datetime.strptime(str(row.get("validity_date")), "%Y-%m-%d").date()
+            if validity < datetime.date.today():
+                score += 4
+        except Exception:
+            pass
+        return score
+
+    def quote_warning_summary(self, row):
+        warnings = []
+        if not row.get("price"):
+            warnings.append("missing price")
+        if not row.get("moq") or str(row.get("moq")).upper() == "N/A":
+            warnings.append("missing MOQ")
+        if not row.get("lead_time") or str(row.get("lead_time")).upper() == "N/A":
+            warnings.append("missing lead time")
+        if "high" in str(row.get("sourcing_risk") or "").lower():
+            warnings.append("high risk")
+        try:
+            import datetime
+            validity = datetime.datetime.strptime(str(row.get("validity_date")), "%Y-%m-%d").date()
+            if validity < datetime.date.today():
+                warnings.append("expired")
+        except Exception:
+            pass
+        return ", ".join(warnings) if warnings else "ready for approval"
+
+    def get_dashboard_selected_quote_ids(self):
+        if not hasattr(self, "dashboard_approval_tree"):
+            return []
+        ids = []
+        for item in self.dashboard_approval_tree.selection():
+            vals = self.dashboard_approval_tree.item(item, "values")
+            if vals:
+                try:
+                    ids.append(int(vals[0]))
+                except Exception:
+                    pass
+        return ids
+
+    def update_dashboard_selected_quote(self, status):
+        quote_ids = self.get_dashboard_selected_quote_ids()
+        if not quote_ids:
+            messagebox.showwarning("Select Quote", "Please select a quote in the approval queue first.")
+            return
+        self.set_quote_status_by_ids(quote_ids, status)
+
+    def open_dashboard_quote_in_quotes(self):
+        quote_ids = self.get_dashboard_selected_quote_ids()
+        self.show_page("Sourcing Analysis")
+        try:
+            self.sourcing_tabview.set("📊 Quotes Comparison")
+        except Exception:
+            pass
+        if quote_ids and hasattr(self, "tree"):
+            target = str(quote_ids[0])
+            for item in self.tree.get_children():
+                vals = self.tree.item(item, "values")
+                if vals and str(vals[0]) == target:
+                    self.tree.selection_set(item)
+                    self.tree.focus(item)
+                    self.tree.see(item)
+                    break
+
+    def send_dashboard_quote_to_rfq(self):
+        quote_ids = self.get_dashboard_selected_quote_ids()
+        if not quote_ids:
+            messagebox.showwarning("Select Quote", "Please select a quote in the approval queue first.")
+            return
+        quote = next((r for r in self.extracted_data if r.get("id") == quote_ids[0]), None)
+        if not quote:
+            return
+        self.show_page("RFQs Outreach")
+        try:
+            self.rfqs_tabview.set("📝 RFQ Generator")
+        except Exception:
+            pass
+        product = self.clean_product_name(quote.get("product"))
+        self.rfq_product_cb.set("Custom")
+        self.rfq_name_entry.delete(0, tk.END)
+        self.rfq_name_entry.insert(0, product)
+        self.rfq_specs_text.delete("1.0", tk.END)
+        specs = "\n".join(x for x in [quote.get("spec"), quote.get("color"), quote.get("elastic"), quote.get("packing")] if x and x != "N/A")
+        self.rfq_specs_text.insert("1.0", specs or f"High-quality {product} matching approved sourcing requirements.")
+        messagebox.showinfo("RFQ Draft Ready", f"Loaded quote {quote_ids[0]} into the RFQ generator.")
 
     def on_closing(self):
         self.is_extracting = False
@@ -2178,6 +2359,20 @@ class App(ctk.CTk):
             messagebox.showwarning("Select Row", "Please select at least one quote row first.")
             return
 
+        quote_ids = []
+        for item in sel:
+            vals = self.tree.item(item, "values")
+            try:
+                quote_ids.append(int(vals[0]))
+            except Exception:
+                pass
+        self.set_quote_status_by_ids(quote_ids, status)
+
+    def set_quote_status_by_ids(self, quote_ids, status):
+        if not quote_ids:
+            messagebox.showwarning("Select Row", "Please select at least one quote row first.")
+            return
+
         status_notes = {
             "Approved": "Quote approved for sourcing comparison and downstream PO/RFQ use.",
             "Needs Review": "Quote returned to review queue for verification.",
@@ -2187,9 +2382,7 @@ class App(ctk.CTk):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         updated = 0
-        for item in sel:
-            vals = self.tree.item(item, "values")
-            q_id = int(vals[0])
+        for q_id in quote_ids:
             current = next((r.get("review_status") for r in self.extracted_data if r.get("id") == q_id), None)
             c.execute("""
                 UPDATE extracted_quotes
@@ -2588,6 +2781,8 @@ class App(ctk.CTk):
         conn.close()
         if hasattr(self, "rfq_register_tree"):
             self.load_rfq_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
         return rfq_id
 
     def save_po_record(self, status="Issued", pdf_path=""):
@@ -2648,6 +2843,8 @@ class App(ctk.CTk):
         conn.close()
         if hasattr(self, "po_register_tree"):
             self.load_po_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
         return po_id
 
     def start_contact_extraction_thread(self):
@@ -6292,6 +6489,8 @@ class App(ctk.CTk):
         conn.commit()
         conn.close()
         self.load_rfq_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
 
     def on_rfq_product_changed(self, choice):
         if choice == "Custom":
@@ -8622,6 +8821,8 @@ Authorized Signature: ___________________________
         conn.commit()
         conn.close()
         self.load_po_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
 
     def setup_price_history_tab(self):
         tab_history = self.sourcing_tabview.tab("📈 Price History")
