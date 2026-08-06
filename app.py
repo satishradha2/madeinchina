@@ -134,6 +134,148 @@ def init_db():
         c.execute("ALTER TABLE extracted_quotes ADD COLUMN attached_media TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN review_status TEXT DEFAULT 'Needs Review'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN reviewed_by TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN reviewed_at TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN review_notes TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN supplier_master_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN product_master_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+    # Table for enterprise audit trail of user-visible procurement changes
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS quote_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quote_id INTEGER,
+            action TEXT,
+            previous_status TEXT,
+            new_status TEXT,
+            note TEXT,
+            actor TEXT DEFAULT 'Local User',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        UPDATE extracted_quotes
+        SET review_status = 'Needs Review'
+        WHERE review_status IS NULL OR review_status = ''
+    """)
+
+    # Enterprise master data tables for controlled supplier/product records
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS supplier_master (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            legal_name TEXT,
+            display_name TEXT UNIQUE,
+            country TEXT,
+            city TEXT,
+            contact_person TEXT,
+            email TEXT,
+            phone TEXT,
+            category TEXT,
+            status TEXT DEFAULT 'Active',
+            payment_terms TEXT,
+            certifications TEXT,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS product_master (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_name TEXT UNIQUE,
+            category TEXT,
+            standard_specs TEXT,
+            packaging TEXT,
+            carton_cbm REAL,
+            compliance_requirements TEXT,
+            target_price REAL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS master_data_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT,
+            entity_id INTEGER,
+            action TEXT,
+            note TEXT,
+            actor TEXT DEFAULT 'Local User',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # RFQ and PO workflow registers for enterprise procurement control
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS rfq_register (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rfq_number TEXT UNIQUE,
+            product_master_id INTEGER,
+            product_name TEXT,
+            target_quantity TEXT,
+            price_terms TEXT,
+            lead_time TEXT,
+            payment_terms TEXT,
+            selected_suppliers TEXT,
+            status TEXT DEFAULT 'Draft',
+            pdf_path TEXT,
+            specs TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS po_register (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            po_number TEXT UNIQUE,
+            supplier_master_id INTEGER,
+            product_master_id INTEGER,
+            quote_id INTEGER,
+            supplier_name TEXT,
+            product_name TEXT,
+            quantity INTEGER,
+            unit_cost REAL,
+            total_value REAL,
+            payment_terms TEXT,
+            delivery_address TEXT,
+            status TEXT DEFAULT 'Issued',
+            pdf_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS workflow_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workflow_type TEXT,
+            workflow_id INTEGER,
+            action TEXT,
+            status TEXT,
+            note TEXT,
+            actor TEXT DEFAULT 'Local User',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
         
     # Table for chatbot history persistence
     c.execute("""
@@ -199,6 +341,206 @@ def init_db():
     conn.close()
 
 class App(ctk.CTk):
+    THEME = {
+        "app_bg": "#F5F7FA",
+        "surface": "#FFFFFF",
+        "surface_alt": "#F1F5F9",
+        "surface_soft": "#F8FAFC",
+        "input_bg": "#FBFCFE",
+        "sidebar": "#111827",
+        "sidebar_hover": "#1F2937",
+        "primary": "#1E4E8C",
+        "primary_hover": "#173E70",
+        "success": "#15803D",
+        "success_hover": "#116A33",
+        "warning": "#B45309",
+        "warning_hover": "#92400E",
+        "danger": "#B91C1C",
+        "danger_hover": "#991B1B",
+        "text": "#111827",
+        "muted": "#6B7280",
+        "border": "#D9E2EC",
+        "border_strong": "#B8C5D3",
+        "table_header": "#E5EAF1",
+        "table_selected": "#D7E7F7",
+        "shadow": "#E8EDF3",
+    }
+
+    def apply_app_theme(self):
+        ctk.set_appearance_mode("light")
+        ctk.set_default_color_theme("blue")
+        self.configure(fg_color=self.THEME["app_bg"])
+
+    def make_button(self, parent, text, command=None, variant="primary", **kwargs):
+        palette = {
+            "primary": (self.THEME["primary"], self.THEME["primary_hover"], "white"),
+            "secondary": (self.THEME["surface_alt"], "#E2E8F0", self.THEME["text"]),
+            "success": (self.THEME["success"], self.THEME["success_hover"], "white"),
+            "warning": (self.THEME["warning"], self.THEME["warning_hover"], "white"),
+            "danger": (self.THEME["danger"], self.THEME["danger_hover"], "white"),
+            "ghost": ("transparent", self.THEME["sidebar_hover"], "#D1D5DB"),
+        }
+        fg, hover, text_color = palette.get(variant, palette["primary"])
+        defaults = {
+            "fg_color": fg,
+            "hover_color": hover,
+            "text_color": text_color,
+            "corner_radius": 6,
+            "height": 32,
+            "font": ctk.CTkFont(size=12, weight="bold"),
+        }
+        defaults.update(kwargs)
+        return ctk.CTkButton(parent, text=text, command=command, **defaults)
+
+    def make_tabview(self, parent):
+        return ctk.CTkTabview(
+            parent,
+            fg_color=self.THEME["surface"],
+            border_color=self.THEME["border"],
+            border_width=1,
+            corner_radius=8,
+            segmented_button_fg_color=self.THEME["surface_alt"],
+            segmented_button_selected_color=self.THEME["primary"],
+            segmented_button_selected_hover_color=self.THEME["primary_hover"],
+            segmented_button_unselected_color=self.THEME["surface_alt"],
+            segmented_button_unselected_hover_color="#DDE6F0",
+            text_color=self.THEME["text"],
+            segmented_button_font=ctk.CTkFont(size=12),
+        )
+
+    def style_workspace_table(self, style_name="Treeview"):
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            style_name,
+            background=self.THEME["surface"],
+            foreground=self.THEME["text"],
+            rowheight=28,
+            fieldbackground=self.THEME["surface"],
+            borderwidth=0,
+            font=("Segoe UI", 9),
+        )
+        style.map(
+            style_name,
+            background=[("selected", self.THEME["table_selected"])],
+            foreground=[("selected", self.THEME["text"])],
+        )
+        style.configure(
+            f"{style_name}.Heading",
+            background=self.THEME["table_header"],
+            foreground=self.THEME["text"],
+            borderwidth=0,
+            relief="flat",
+            font=("Segoe UI", 9, "bold"),
+        )
+
+    def _is_inside_sidebar(self, widget):
+        parent = widget
+        while parent is not None:
+            if parent is getattr(self, "sidebar_frame", None):
+                return True
+            try:
+                parent = parent.master
+            except Exception:
+                return False
+        return False
+
+    def apply_legacy_light_polish(self, root=None):
+        root = root or self
+        dark_surfaces = {"#2b2b2b", "#2c2c2c", "#3c3c3c", "#3a3a3a"}
+        default_grey_surfaces = {
+            "gray86",
+            "grey86",
+            "gray85",
+            "grey85",
+            "#dbdbdb",
+            "#d9d9d9",
+            "#d3d3d3",
+            "#e5e5e5",
+            "#ebebeb",
+        }
+        danger_surfaces = {"#3c2424", "#4d1e1e"}
+
+        def normalize_color(value):
+            if isinstance(value, (list, tuple)) and value:
+                return str(value[0]).lower()
+            return str(value).lower()
+
+        def safe_configure(widget, **kwargs):
+            for key, value in kwargs.items():
+                try:
+                    widget.configure(**{key: value})
+                except Exception:
+                    pass
+
+        def visit(widget):
+            if self._is_inside_sidebar(widget):
+                return
+
+            try:
+                fg = normalize_color(widget.cget("fg_color"))
+                if fg in dark_surfaces:
+                    safe_configure(
+                        widget,
+                        fg_color=self.THEME["surface"],
+                        border_color=self.THEME["border"],
+                        border_width=1,
+                        corner_radius=8,
+                    )
+                elif fg in default_grey_surfaces and isinstance(widget, (ctk.CTkFrame, ctk.CTkScrollableFrame)):
+                    safe_configure(
+                        widget,
+                        fg_color=self.THEME["surface"],
+                        border_color=self.THEME["border"],
+                        border_width=1,
+                        corner_radius=8,
+                    )
+                elif fg in danger_surfaces:
+                    safe_configure(widget, fg_color="#FEF2F2", border_color="#FCA5A5", border_width=1)
+                elif fg == "#1f538d" and isinstance(widget, ctk.CTkFrame):
+                    safe_configure(widget, fg_color="#E8F1FB", border_color="#BFDBFE", border_width=1)
+            except Exception:
+                pass
+
+            try:
+                if isinstance(widget, ctk.CTkLabel):
+                    color = normalize_color(widget.cget("text_color"))
+                    if color in {"grey", "gray", "lightgrey", "lightgray", "#cccccc"}:
+                        widget.configure(text_color=self.THEME["muted"])
+                    elif color == "white":
+                        widget.configure(text_color=self.THEME["text"])
+            except Exception:
+                pass
+
+            try:
+                if isinstance(widget, ctk.CTkTextbox):
+                    fg = normalize_color(widget.cget("fg_color"))
+                    if fg in dark_surfaces or fg in default_grey_surfaces:
+                        safe_configure(
+                            widget,
+                            fg_color=self.THEME["input_bg"],
+                            text_color=self.THEME["text"],
+                            border_color=self.THEME["border"],
+                            border_width=1,
+                            corner_radius=8,
+                        )
+                elif isinstance(widget, (ctk.CTkEntry, ctk.CTkComboBox)):
+                    safe_configure(
+                        widget,
+                        fg_color=self.THEME["input_bg"],
+                        border_color=self.THEME["border_strong"],
+                        button_color="#AAB4C0",
+                        button_hover_color="#94A3B8",
+                        text_color=self.THEME["text"],
+                    )
+            except Exception:
+                pass
+
+            for child in widget.winfo_children():
+                visit(child)
+
+        visit(root)
+
     def generate_with_fallback(self, content_list, prompt, json_response=True):
         if hasattr(self, 'api_provider') and self.api_provider == "Custom OpenAI/Luna":
             import urllib.request
@@ -315,10 +657,10 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("AI Supplier Quote Extractor")
-        self.geometry("1400x750")
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
+        self.title("ProcureAI Enterprise")
+        self.geometry("1440x820")
+        self.minsize(1180, 720)
+        self.apply_app_theme()
 
         self.api_key = ""
         self.api_provider = "Google Gemini"
@@ -351,15 +693,17 @@ class App(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- LEFT PANEL: Sidebar Navigation Menu ---
-        self.sidebar_frame = ctk.CTkFrame(self, width=240, corner_radius=0)
-        self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self.sidebar_frame = ctk.CTkFrame(self, width=240, corner_radius=0, fg_color=self.THEME["sidebar"])
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         
-        self.logo_lbl = ctk.CTkLabel(self.sidebar_frame, text="ProcureAI Enterprise", font=ctk.CTkFont(size=18, weight="bold"), text_color="#1f538d")
-        self.logo_lbl.pack(pady=15, padx=10)
+        self.logo_lbl = ctk.CTkLabel(self.sidebar_frame, text="ProcureAI", font=ctk.CTkFont(size=22, weight="bold"), text_color="white")
+        self.logo_lbl.pack(pady=(24, 2), padx=18, anchor="w")
+        self.logo_subtitle = ctk.CTkLabel(self.sidebar_frame, text="Sourcing command center", font=ctk.CTkFont(size=11), text_color="#9CA3AF")
+        self.logo_subtitle.pack(pady=(0, 22), padx=18, anchor="w")
 
         # Container for navigation list
         self.nav_container = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
-        self.nav_container.pack(fill="both", expand=True, padx=5, pady=5)
+        self.nav_container.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Navigation buttons mapping
         self.sidebar_buttons = {}
@@ -372,19 +716,26 @@ class App(ctk.CTk):
             ("⚙️ Settings & System", "Settings Directory")
         ]
 
+        nav_items = [
+            ("Dashboard", "Dashboard"),
+            ("Quotes", "Sourcing Analysis"),
+            ("Suppliers & Settings", "Settings Directory"),
+            ("Costing", "Logistics Costing"),
+            ("RFQ & Negotiation", "RFQs Outreach"),
+            ("Compliance", "Scorecard Compliance"),
+            ("Trade & Customs", "Customs AI Search")
+        ]
+
         for label, page_key in nav_items:
-            btn = ctk.CTkButton(
+            btn = self.make_button(
                 self.nav_container, 
                 text=label, 
                 anchor="w", 
-                fg_color="transparent", 
-                text_color="white",
-                hover_color="#2c2c2c",
+                variant="ghost",
                 command=lambda pk=page_key: self.show_page(pk),
-                height=38,
-                font=ctk.CTkFont(size=12, weight="bold")
+                height=38
             )
-            btn.pack(fill="x", pady=4, padx=8)
+            btn.pack(fill="x", pady=3, padx=0)
             self.sidebar_buttons[page_key] = btn
 
         # --- MIDDLE PANEL: Active Page Container ---
@@ -392,23 +743,26 @@ class App(ctk.CTk):
         self.sourcing_files_visible = True
         self.document_preview_visible = True
 
-        self.right_frame = ctk.CTkFrame(self, corner_radius=0)
-        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        self.right_frame = ctk.CTkFrame(self, corner_radius=0, fg_color=self.THEME["app_bg"])
+        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=14, pady=14)
         self.right_frame.grid_columnconfigure(0, weight=1)
         self.right_frame.grid_rowconfigure(0, weight=0) # Control header row
         self.right_frame.grid_rowconfigure(1, weight=1) # Page content row
 
         # Control header bar
-        self.top_control_bar = ctk.CTkFrame(self.right_frame, height=35, fg_color="transparent")
-        self.top_control_bar.grid(row=0, column=0, sticky="ew", padx=5, pady=(2, 5))
+        self.top_control_bar = ctk.CTkFrame(self.right_frame, height=42, fg_color="transparent")
+        self.top_control_bar.grid(row=0, column=0, sticky="ew", padx=2, pady=(0, 8))
 
         self.btn_toggle_nav = ctk.CTkButton(self.top_control_bar, text="☰ Hide Navigation", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=130, height=28, command=self.toggle_navigation_sidebar)
         self.btn_toggle_nav.pack(side="left", padx=5)
+        self.btn_toggle_nav.configure(text="Hide Navigation", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], height=30)
 
         self.btn_toggle_files = ctk.CTkButton(self.top_control_bar, text="📁 Hide Source Files", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=140, height=28, command=self.toggle_sourcing_files)
+        self.btn_toggle_files.configure(text="Hide Source Files", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], height=30)
         # Will be packed dynamically inside show_page()
 
         self.btn_toggle_preview = ctk.CTkButton(self.top_control_bar, text="📄 Hide Preview", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=110, height=28, command=self.toggle_document_preview)
+        self.btn_toggle_preview.configure(text="Hide Preview", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], height=30)
         # Will be packed dynamically inside show_page()
 
         self.pages_container = ctk.CTkFrame(self.right_frame, fg_color="transparent")
@@ -417,15 +771,17 @@ class App(ctk.CTk):
         self.pages_container.grid_rowconfigure(0, weight=1)
 
         self.pages = {}
-        for name in ["Sourcing Analysis", "Scorecard Compliance", "Logistics Costing", "RFQs Outreach", "Customs AI Search", "Settings Directory"]:
+        for name in ["Dashboard", "Sourcing Analysis", "Scorecard Compliance", "Logistics Costing", "RFQs Outreach", "Customs AI Search", "Settings Directory"]:
             self.pages[name] = ctk.CTkFrame(self.pages_container, fg_color="transparent")
             self.pages[name].grid_columnconfigure(0, weight=1)
             self.pages[name].grid_rowconfigure(0, weight=1)
 
+        self.setup_dashboard_page()
+
         # ---------------------------------------------
         # 1. Workspace: Sourcing & Analysis
         # ---------------------------------------------
-        self.sourcing_tabview = ctk.CTkTabview(self.pages["Sourcing Analysis"])
+        self.sourcing_tabview = self.make_tabview(self.pages["Sourcing Analysis"])
         self.sourcing_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_comp = self.sourcing_tabview.add("📊 Quotes Comparison")
@@ -441,7 +797,7 @@ class App(ctk.CTk):
         tab_comp.grid_columnconfigure(1, weight=1)
         tab_comp.grid_rowconfigure(0, weight=1)
 
-        self.sourcing_files_subframe = ctk.CTkFrame(tab_comp, width=260)
+        self.sourcing_files_subframe = ctk.CTkFrame(tab_comp, width=260, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(5, 10), pady=10)
         
         self.sourcing_grid_subframe = ctk.CTkFrame(tab_comp, fg_color="transparent")
@@ -457,34 +813,40 @@ class App(ctk.CTk):
         self.load_btn_frame.pack(fill="x", pady=(0, 5))
 
         self.btn_select_folder = ctk.CTkButton(self.load_btn_frame, text="Select Folder", command=self.select_folder, width=115)
+        self.btn_select_folder.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], corner_radius=6)
         self.btn_select_folder.pack(side="left", fill="x", expand=True, padx=(0, 2))
 
         self.btn_select_files = ctk.CTkButton(self.load_btn_frame, text="+ Add Files", fg_color="#1f538d", hover_color="#153e6b", command=self.select_files, width=115)
+        self.btn_select_files.configure(fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], text_color="white", corner_radius=6)
         self.btn_select_files.pack(side="right", fill="x", expand=True, padx=(2, 0))
 
-        self.folder_entry = ctk.CTkEntry(self.folder_frame, placeholder_text="Or paste folder path here...")
+        self.folder_entry = ctk.CTkEntry(self.folder_frame, placeholder_text="Or paste folder path here...", height=34, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border_strong"])
         self.folder_entry.pack(pady=2, fill="x")
         self.folder_entry.bind("<Return>", lambda event: self.on_path_entered())
         self.folder_entry.bind("<FocusOut>", lambda event: self.on_path_entered())
 
         # Files Queue List Views (Unsynced and Synced separated)
         self.unsynced_lbl = ctk.CTkLabel(self.sourcing_files_subframe, text="⏳ Unsynced Queue:", anchor="w", font=ctk.CTkFont(weight="bold"))
-        self.unsynced_lbl.pack(fill="x", padx=10, pady=(5, 0))
+        self.unsynced_lbl.configure(text="Pending Queue", font=ctk.CTkFont(size=13, weight="bold"), text_color=self.THEME["text"])
+        self.unsynced_lbl.pack(fill="x", padx=10, pady=(10, 3))
 
-        self.files_box_unsynced = tk.Listbox(self.sourcing_files_subframe, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectbackground="#1f538d", selectforeground="white", font=("Segoe UI", 10), height=8)
+        self.files_box_unsynced = tk.Listbox(self.sourcing_files_subframe, bg="#F8FAFC", fg="#111827", borderwidth=0, highlightthickness=1, highlightbackground="#D9E2EC", selectbackground="#D7E7F7", selectforeground="#111827", font=("Segoe UI", 10), height=8)
         self.files_box_unsynced.pack(fill="both", expand=True, padx=10, pady=(2, 5))
 
         self.synced_lbl = ctk.CTkLabel(self.sourcing_files_subframe, text="✅ Synced Quotes:", anchor="w", font=ctk.CTkFont(weight="bold"))
-        self.synced_lbl.pack(fill="x", padx=10, pady=(5, 0))
+        self.synced_lbl.configure(text="Synced Quotes", font=ctk.CTkFont(size=13, weight="bold"), text_color=self.THEME["text"])
+        self.synced_lbl.pack(fill="x", padx=10, pady=(10, 3))
 
-        self.files_box_synced = tk.Listbox(self.sourcing_files_subframe, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectbackground="#1f538d", selectforeground="white", font=("Segoe UI", 10), height=8)
+        self.files_box_synced = tk.Listbox(self.sourcing_files_subframe, bg="#F8FAFC", fg="#111827", borderwidth=0, highlightthickness=1, highlightbackground="#D9E2EC", selectbackground="#D7E7F7", selectforeground="#111827", font=("Segoe UI", 10), height=8)
         self.files_box_synced.pack(fill="both", expand=True, padx=10, pady=(2, 5))
 
         # Control Buttons
         self.btn_start = ctk.CTkButton(self.sourcing_files_subframe, text="Start Extraction", state="disabled", command=self.start_extraction_thread)
+        self.btn_start.configure(fg_color=self.THEME["success"], hover_color=self.THEME["success_hover"], text_color="white", corner_radius=6)
         self.btn_start.pack(fill="x", padx=10, pady=5)
 
         self.btn_organize = ctk.CTkButton(self.sourcing_files_subframe, text="📁 Organize Files", fg_color="#6e4513", hover_color="#52320b", command=self.start_file_organizer_thread)
+        self.btn_organize.configure(text="Organize Files", fg_color=self.THEME["warning"], hover_color=self.THEME["warning_hover"], text_color="white", corner_radius=6)
         self.btn_organize.pack(fill="x", padx=10, pady=5)
 
         self.progress_bar = ctk.CTkProgressBar(self.sourcing_files_subframe)
@@ -494,7 +856,7 @@ class App(ctk.CTk):
         # ---------------------------------------------
         # 2. Workspace: Scorecard & Compliance
         # ---------------------------------------------
-        self.scorecard_tabview = ctk.CTkTabview(self.pages["Scorecard Compliance"])
+        self.scorecard_tabview = self.make_tabview(self.pages["Scorecard Compliance"])
         self.scorecard_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_scorecard = self.scorecard_tabview.add("🏆 Supplier Scorecard")
@@ -504,7 +866,7 @@ class App(ctk.CTk):
         # ---------------------------------------------
         # 3. Workspace: Logistics & Costing
         # ---------------------------------------------
-        self.logistics_tabview = ctk.CTkTabview(self.pages["Logistics Costing"])
+        self.logistics_tabview = self.make_tabview(self.pages["Logistics Costing"])
         self.logistics_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_landed = self.logistics_tabview.add("📦 Landed Cost Simulator")
@@ -514,19 +876,23 @@ class App(ctk.CTk):
         tab_prof = self.logistics_tabview.add("💰 Profit Simulator")
         tab_po = self.logistics_tabview.add("📄 PO Generator")
 
+        tab_po_register = self.logistics_tabview.add("PO Register")
+
         # ---------------------------------------------
         # 4. Workspace: RFQs & Outreach
         # ---------------------------------------------
-        self.rfqs_tabview = ctk.CTkTabview(self.pages["RFQs Outreach"])
+        self.rfqs_tabview = self.make_tabview(self.pages["RFQs Outreach"])
         self.rfqs_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_rfq = self.rfqs_tabview.add("📝 RFQ Generator")
         tab_neg = self.rfqs_tabview.add("💬 AI Negotiation")
 
+        tab_rfq_register = self.rfqs_tabview.add("RFQ Register")
+
         # ---------------------------------------------
         # 5. Workspace: Customs & AI Search
         # ---------------------------------------------
-        self.search_tabview = ctk.CTkTabview(self.pages["Customs AI Search"])
+        self.search_tabview = self.make_tabview(self.pages["Customs AI Search"])
         self.search_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_search = self.search_tabview.add("🔍 AI Visual Search")
@@ -536,23 +902,27 @@ class App(ctk.CTk):
         # ---------------------------------------------
         # 6. Workspace: Settings & System
         # ---------------------------------------------
-        self.settings_tabview = ctk.CTkTabview(self.pages["Settings Directory"])
+        self.settings_tabview = self.make_tabview(self.pages["Settings Directory"])
         self.settings_tabview.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
         tab_settings = self.settings_tabview.add("⚙️ Settings & API")
         tab_dir = self.settings_tabview.add("📇 Supplier Directory")
+        tab_master = self.settings_tabview.add("Master Data")
         
-        settings_card = ctk.CTkFrame(tab_settings, fg_color="#2b2b2b")
+        settings_card = ctk.CTkFrame(tab_settings, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         settings_card.pack(pady=20, padx=20, fill="both", expand=True)
         
         ctk.CTkLabel(settings_card, text="⚙️ Sourcing API & Environment Settings", font=ctk.CTkFont(size=18, weight="bold"), anchor="w").pack(pady=(20, 15), padx=25, fill="x")
         
+        ctk.CTkLabel(settings_card, text="Configure the AI provider used for quote extraction, recommendations, and compliance helpers.", font=ctk.CTkFont(size=12), anchor="w", text_color=self.THEME["muted"]).pack(pady=(0, 18), padx=25, fill="x")
+
         # Form Container for consistent padding & alignment
         form_frame = ctk.CTkFrame(settings_card, fg_color="transparent")
         form_frame.pack(padx=25, fill="x")
 
         # Provider selector
         self.provider_lbl = ctk.CTkLabel(form_frame, text="API Provider:", anchor="w")
+        self.provider_lbl.configure(text_color=self.THEME["text"], font=ctk.CTkFont(size=12, weight="bold"))
         self.provider_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         
         self.provider_cb = ctk.CTkComboBox(form_frame, values=["Google Gemini", "Custom OpenAI/Luna"], command=self.on_provider_changed, width=400)
@@ -561,9 +931,11 @@ class App(ctk.CTk):
 
         # API Key
         self.api_lbl = ctk.CTkLabel(form_frame, text="Gemini API Key:", anchor="w")
+        self.api_lbl.configure(text_color=self.THEME["text"], font=ctk.CTkFont(size=12, weight="bold"))
         self.api_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         
         self.api_entry = ctk.CTkEntry(form_frame, placeholder_text="AIzaSy...", show="*", width=400)
+        self.api_entry.configure(height=34, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border_strong"])
         self.api_entry.pack(pady=2, anchor="w")
         if self.api_key:
             self.api_entry.insert(0, self.api_key)
@@ -572,51 +944,72 @@ class App(ctk.CTk):
         self.custom_api_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
         
         self.base_url_lbl = ctk.CTkLabel(self.custom_api_frame, text="Base URL:", anchor="w")
+        self.base_url_lbl.configure(text_color=self.THEME["text"], font=ctk.CTkFont(size=12, weight="bold"))
         self.base_url_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         self.base_url_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="https://api.openai.com/v1", width=400)
+        self.base_url_entry.configure(height=34, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border_strong"])
         self.base_url_entry.pack(pady=2, anchor="w")
         self.base_url_entry.insert(0, "https://api.openai.com/v1")
         
         self.model_lbl = ctk.CTkLabel(self.custom_api_frame, text="Model Name:", anchor="w")
+        self.model_lbl.configure(text_color=self.THEME["text"], font=ctk.CTkFont(size=12, weight="bold"))
         self.model_lbl.pack(fill="x", pady=(5, 2), anchor="w")
         self.model_entry = ctk.CTkEntry(self.custom_api_frame, placeholder_text="gpt-5.6-luna", width=400)
+        self.model_entry.configure(height=34, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border_strong"])
         self.model_entry.pack(pady=2, anchor="w")
         self.model_entry.insert(0, "gpt-5.6-luna")
 
         self.btn_save_api = ctk.CTkButton(form_frame, text="Save & Test Key", command=self.save_and_test_key, width=200)
+        self.btn_save_api.configure(fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], corner_radius=6, height=36)
         self.btn_save_api.pack(pady=15, anchor="w")
 
         # Safety Zone card inside Settings page
-        safety_card = ctk.CTkFrame(settings_card, fg_color="#3c2424")
+        safety_card = ctk.CTkFrame(settings_card, fg_color="#FEF2F2", border_color="#FECACA", border_width=1, corner_radius=8)
         safety_card.pack(pady=20, padx=25, fill="x")
         
         ctk.CTkLabel(safety_card, text="🚨 Danger Zone", font=ctk.CTkFont(weight="bold"), text_color="#ff8888", anchor="w").pack(anchor="w", padx=15, pady=(10, 5), fill="x")
         
         self.btn_clear_all = ctk.CTkButton(safety_card, text="🧹 Clear All Data", fg_color="#a83232", hover_color="#8c2626", command=self.clear_all_data)
+        self.btn_clear_all.configure(text="Clear All Data", fg_color=self.THEME["danger"], hover_color=self.THEME["danger_hover"], corner_radius=6, height=34)
         self.btn_clear_all.pack(side="left", padx=15, pady=(5, 15))
         
         ctk.CTkLabel(safety_card, text="Warning: Clicking this button permanently purges all quotation records, scorecard data, compliance audits, and attachments from the local database.", font=ctk.CTkFont(size=11), text_color="grey", anchor="w").pack(side="left", padx=10, pady=(5, 15), fill="x", expand=True)
 
         # --- Re-grid Sourcing Grid elements inside subframe ---
         self.table_ctrl_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
-        self.table_ctrl_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+        self.table_ctrl_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(14, 8))
 
         self.table_lbl = ctk.CTkLabel(self.table_ctrl_frame, text="Extracted Quotes Comparison", font=ctk.CTkFont(size=18, weight="bold"))
+        self.table_lbl.configure(font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"])
         self.table_lbl.pack(side="left")
 
         self.btn_add_row = ctk.CTkButton(self.table_ctrl_frame, text="+ Add Row", width=90, command=self.add_empty_row)
+        self.btn_add_row.configure(fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], text_color="white", corner_radius=6, height=34)
         self.btn_add_row.pack(side="right", padx=5)
 
         self.btn_delete_row = ctk.CTkButton(self.table_ctrl_frame, text="- Delete Row", width=90, fg_color="#a83232", hover_color="#8c2626", command=self.delete_selected_row)
+        self.btn_delete_row.configure(fg_color=self.THEME["danger"], hover_color=self.THEME["danger_hover"], text_color="white", corner_radius=6, height=34)
         self.btn_delete_row.pack(side="right", padx=5)
 
+        self.btn_reject_quote = self.make_button(self.table_ctrl_frame, text="Reject", width=78, command=lambda: self.set_selected_quote_status("Rejected"), variant="danger")
+        self.btn_reject_quote.pack(side="right", padx=5)
+
+        self.btn_review_quote = self.make_button(self.table_ctrl_frame, text="Review", width=78, command=lambda: self.set_selected_quote_status("Needs Review"), variant="warning")
+        self.btn_review_quote.pack(side="right", padx=5)
+
+        self.btn_approve_quote = self.make_button(self.table_ctrl_frame, text="Approve", width=82, command=lambda: self.set_selected_quote_status("Approved"), variant="success")
+        self.btn_approve_quote.pack(side="right", padx=5)
+
         self.btn_edit_row = ctk.CTkButton(self.table_ctrl_frame, text="✏ Edit Row", width=90, command=self.edit_selected_row)
+        self.btn_edit_row.configure(text="Edit Row", fg_color="#3B82C4", hover_color="#2C6DA6", text_color="white", corner_radius=6, height=34)
         self.btn_edit_row.pack(side="right", padx=5)
 
         self.btn_attach_media = ctk.CTkButton(self.table_ctrl_frame, text="📎 Attach Media", width=100, command=self.attach_media_to_selected)
+        self.btn_attach_media.configure(text="Attach Media", fg_color="#3B82C4", hover_color="#2C6DA6", text_color="white", corner_radius=6, height=34)
         self.btn_attach_media.pack(side="right", padx=5)
 
         self.btn_paste_chat = ctk.CTkButton(self.table_ctrl_frame, text="📋 Paste Chat", width=90, fg_color="#1f538d", command=self.open_paste_chat_window)
+        self.btn_paste_chat.configure(text="Paste Chat", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], corner_radius=6, height=34)
         self.btn_paste_chat.pack(side="right", padx=5)
 
         # Row 1: Search box
@@ -624,6 +1017,13 @@ class App(ctk.CTk):
         self.search_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
         
         self.search_entry = ctk.CTkEntry(self.search_frame, placeholder_text="🔍 Type to filter by supplier, product, color, specs, etc...", height=28)
+        self.search_entry.configure(
+            placeholder_text="Search supplier, product, color, specs, terms...",
+            height=36,
+            fg_color=self.THEME["surface_soft"],
+            border_color=self.THEME["border_strong"],
+            text_color=self.THEME["text"]
+        )
         self.search_entry.pack(fill="x", expand=True, padx=5, pady=5)
         self.search_entry.bind("<KeyRelease>", lambda event: self.filter_table())
 
@@ -631,32 +1031,36 @@ class App(ctk.CTk):
         self.setup_table(self.sourcing_grid_subframe)
 
         # Row 4: AI Procurement Chatbot Panel
-        self.chat_panel = ctk.CTkFrame(self.sourcing_grid_subframe, height=180)
-        self.chat_panel.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
+        self.chat_panel = ctk.CTkFrame(self.sourcing_grid_subframe, height=180, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        self.chat_panel.grid(row=4, column=0, sticky="ew", padx=12, pady=(8, 5))
         self.chat_panel.grid_propagate(False)
         self.chat_panel.grid_columnconfigure(0, weight=1)
         self.chat_panel.grid_rowconfigure(1, weight=1)
 
         self.chat_title = ctk.CTkLabel(self.chat_panel, text="💬 AI Procurement Assistant", font=ctk.CTkFont(size=13, weight="bold"))
-        self.chat_title.grid(row=0, column=0, columnspan=2, padx=10, pady=3, sticky="w")
+        self.chat_title.configure(text="AI Procurement Assistant", font=ctk.CTkFont(size=14, weight="bold"), text_color=self.THEME["text"])
+        self.chat_title.grid(row=0, column=0, columnspan=2, padx=12, pady=(8, 3), sticky="w")
 
         self.chat_log = ctk.CTkTextbox(self.chat_panel, wrap="word", font=("Segoe UI", 9))
-        self.chat_log.grid(row=1, column=0, columnspan=2, padx=10, pady=3, sticky="nsew")
+        self.chat_log.configure(fg_color=self.THEME["surface_soft"], text_color=self.THEME["text"], border_width=0)
+        self.chat_log.grid(row=1, column=0, columnspan=2, padx=12, pady=3, sticky="nsew")
 
         self.chat_input_frame = ctk.CTkFrame(self.chat_panel, fg_color="transparent")
         self.chat_input_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
         self.chat_input_frame.grid_columnconfigure(0, weight=1)
 
         self.chat_entry = ctk.CTkEntry(self.chat_input_frame, placeholder_text="Ask AI assistant...", height=26)
+        self.chat_entry.configure(height=32, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border_strong"])
         self.chat_entry.grid(row=0, column=0, sticky="ew", padx=(0, 5))
         self.chat_entry.bind("<Return>", lambda event: self.send_chat_message())
 
         self.btn_chat_send = ctk.CTkButton(self.chat_input_frame, text="Send", width=60, height=26, command=self.send_chat_message)
+        self.btn_chat_send.configure(width=70, height=32, fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], corner_radius=6)
         self.btn_chat_send.grid(row=0, column=1, sticky="e")
 
         # Row 5: Export Buttons & Currency dropdown
         self.export_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
-        self.export_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=10)
+        self.export_frame.grid(row=5, column=0, sticky="ew", padx=12, pady=10)
 
         self.currency_lbl = ctk.CTkLabel(self.export_frame, text="Currency:")
         self.currency_lbl.pack(side="left", padx=(10, 5))
@@ -668,9 +1072,11 @@ class App(ctk.CTk):
         self.currency_status_lbl.pack(side="left", padx=10)
 
         self.btn_export_excel = ctk.CTkButton(self.export_frame, text="Export to Excel", fg_color="#1f7d44", hover_color="#15592e", command=self.export_to_excel)
+        self.btn_export_excel.configure(fg_color=self.THEME["success"], hover_color=self.THEME["success_hover"], corner_radius=6, height=34)
         self.btn_export_excel.pack(side="right", padx=5)
 
         self.btn_export_csv = ctk.CTkButton(self.export_frame, text="Export to CSV", command=self.export_to_csv)
+        self.btn_export_csv.configure(fg_color="#3B82C4", hover_color="#2C6DA6", corner_radius=6, height=34)
         self.btn_export_csv.pack(side="right", padx=5)
 
 
@@ -692,8 +1098,10 @@ class App(ctk.CTk):
         self.btn_extract_contacts = ctk.CTkButton(self.dir_header_frame, text="🔍 Auto-Extract Contacts", width=160, fg_color="#1f7d44", hover_color="#15592e", command=self.start_contact_extraction_thread)
         self.btn_extract_contacts.pack(side="right", padx=5)
 
-        self.directory_scroll_frame = ctk.CTkScrollableFrame(tab_dir, fg_color="#2b2b2b")
+        self.directory_scroll_frame = ctk.CTkScrollableFrame(tab_dir, fg_color=self.THEME["surface_soft"])
         self.directory_scroll_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
+
+        self.setup_master_data_tab()
 
         # --- PAGE 3: Visual Price Comparison Charts ---
         tab_charts = self.sourcing_tabview.tab("📈 Visual Charts")
@@ -712,7 +1120,7 @@ class App(ctk.CTk):
         self.chart_lbl = ctk.CTkLabel(self.chart_ctrl_frame, text="Filter Category:")
         self.chart_lbl.pack(side="right", padx=5)
 
-        self.chart_display_frame = ctk.CTkFrame(tab_charts, fg_color="#2b2b2b")
+        self.chart_display_frame = ctk.CTkFrame(tab_charts, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         self.chart_display_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
 
         # Setup Sourcing Insights tab
@@ -732,6 +1140,7 @@ class App(ctk.CTk):
 
         # Setup RFQ Generator tab
         self.setup_rfq_generator_tab()
+        self.setup_rfq_register_tab()
 
         # Setup Profit Simulator tab
         self.setup_profit_simulator_tab()
@@ -759,6 +1168,7 @@ class App(ctk.CTk):
 
         # Setup PO Generator tab
         self.setup_po_generator_tab()
+        self.setup_po_register_tab()
 
         # Setup Price History & Trend Tracker tab
         self.setup_price_history_tab()
@@ -770,15 +1180,15 @@ class App(ctk.CTk):
         self.setup_global_barriers_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
-        self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0)
-        self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+        self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1)
+        self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 14), pady=14)
         self.preview_frame.grid_columnconfigure(0, weight=1)
         self.preview_frame.grid_rowconfigure(3, weight=1)
 
-        self.preview_title = ctk.CTkLabel(self.preview_frame, text="Document Preview", font=ctk.CTkFont(size=18, weight="bold"))
+        self.preview_title = ctk.CTkLabel(self.preview_frame, text="Document Preview", font=ctk.CTkFont(size=18, weight="bold"), text_color=self.THEME["text"])
         self.preview_title.grid(row=0, column=0, pady=15, padx=10, sticky="ew")
 
-        self.preview_filename_lbl = ctk.CTkLabel(self.preview_frame, text="Select a row to preview", wraplength=330, text_color="grey")
+        self.preview_filename_lbl = ctk.CTkLabel(self.preview_frame, text="Select a row to preview", wraplength=330, text_color=self.THEME["muted"])
         self.preview_filename_lbl.grid(row=1, column=0, pady=5, padx=10, sticky="ew")
 
         # Horizontal Media Gallery Bar Frame
@@ -786,32 +1196,191 @@ class App(ctk.CTk):
         self.preview_gallery_bar.grid(row=2, column=0, pady=5, padx=15, sticky="ew")
 
         # Container for preview media
-        self.preview_display_frame = ctk.CTkFrame(self.preview_frame, fg_color="#2b2b2b")
+        self.preview_display_frame = ctk.CTkFrame(self.preview_frame, fg_color=self.THEME["surface_alt"], corner_radius=8)
         self.preview_display_frame.grid(row=3, column=0, sticky="nsew", padx=15, pady=10)
         self.preview_display_frame.grid_columnconfigure(0, weight=1)
         self.preview_display_frame.grid_rowconfigure(0, weight=1)
 
-        self.preview_image_lbl = ctk.CTkLabel(self.preview_display_frame, text="No document selected")
+        self.preview_image_lbl = ctk.CTkLabel(self.preview_display_frame, text="No document selected", text_color=self.THEME["muted"], font=ctk.CTkFont(size=14, weight="bold"))
         self.preview_image_lbl.pack(pady=120, padx=10)
 
         # Scrolling text box for text file rendering
         self.preview_text_box = ctk.CTkTextbox(self.preview_display_frame, wrap="word")
 
         # Metrics Overlay Frame inside preview_frame
-        self.preview_metrics_frame = ctk.CTkFrame(self.preview_frame, fg_color="#2b2b2b")
+        self.preview_metrics_frame = ctk.CTkFrame(self.preview_frame, fg_color=self.THEME["surface_alt"], corner_radius=8)
         self.preview_metrics_frame.grid(row=4, column=0, sticky="ew", padx=15, pady=5)
         self.update_preview_metrics_overlay(None)
 
         # System open button
-        self.btn_open_external = ctk.CTkButton(self.preview_frame, text="Open File Externally", state="disabled", command=self.open_file_externally)
+        self.btn_open_external = ctk.CTkButton(self.preview_frame, text="Open File Externally", state="disabled", command=self.open_file_externally, fg_color="#3B82C4", hover_color="#2C6DA6", corner_radius=6, height=34)
         self.btn_open_external.grid(row=5, column=0, pady=10, padx=15, sticky="ew")
 
         # Load configurations & history
         self.load_config()
         self.load_chat_history_from_db()
         self.load_all_quotes_from_db()
-        self.show_page("Sourcing Analysis")
+        self.apply_legacy_light_polish()
+        self.show_page("Dashboard")
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def setup_dashboard_page(self):
+        self.style_workspace_table("Treeview")
+        page = self.pages["Dashboard"]
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(2, weight=1)
+
+        header = ctk.CTkFrame(page, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=6, pady=(2, 12))
+        header.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            header,
+            text="Procurement Overview",
+            font=ctk.CTkFont(size=26, weight="bold"),
+            text_color=self.THEME["text"],
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            header,
+            text="Live sourcing status, supplier risk, and next actions from your quote database.",
+            font=ctk.CTkFont(size=12),
+            text_color=self.THEME["muted"],
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+
+        self.dashboard_cards_frame = ctk.CTkFrame(page, fg_color="transparent")
+        self.dashboard_cards_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 10))
+        for idx in range(6):
+            self.dashboard_cards_frame.grid_columnconfigure(idx, weight=1, uniform="dash_cards")
+
+        self.dashboard_cards = {}
+        card_specs = [
+            ("quotes", "Quote Rows", "0"),
+            ("suppliers", "Suppliers", "0"),
+            ("best", "Best Unit Price", "N/A"),
+            ("review", "Needs Review", "0"),
+            ("approved", "Approved", "0"),
+            ("expired", "Expired Quotes", "0"),
+        ]
+        for idx, (key, title, value) in enumerate(card_specs):
+            card = ctk.CTkFrame(
+                self.dashboard_cards_frame,
+                fg_color=self.THEME["surface"],
+                border_color=self.THEME["border"],
+                border_width=1,
+                corner_radius=8,
+            )
+            card.grid(row=0, column=idx, sticky="nsew", padx=6)
+            ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["muted"]).pack(anchor="w", padx=14, pady=(12, 2))
+            value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=self.THEME["text"])
+            value_lbl.pack(anchor="w", padx=14, pady=(0, 12))
+            self.dashboard_cards[key] = value_lbl
+
+        body = ctk.CTkFrame(page, fg_color="transparent")
+        body.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+        body.grid_rowconfigure(0, weight=1)
+
+        left = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        left.grid(row=0, column=0, sticky="nsew", padx=(6, 8), pady=6)
+        left.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(left, text="Recent Quote Activity", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+
+        cols = ("supplier", "product", "price", "status")
+        self.dashboard_recent_tree = ttk.Treeview(left, columns=cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("supplier", "Supplier", 210),
+            ("product", "Product", 150),
+            ("price", "Unit Price", 90),
+            ("status", "Status", 140),
+        ]:
+            self.dashboard_recent_tree.heading(col, text=label)
+            self.dashboard_recent_tree.column(col, width=width, anchor="w")
+        self.dashboard_recent_tree.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+
+        right = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        right.grid(row=0, column=1, sticky="nsew", padx=(8, 6), pady=6)
+        right.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(right, text="Recommended Next Actions", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 8))
+        self.dashboard_actions_box = ctk.CTkTextbox(right, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.dashboard_actions_box.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        right.grid_rowconfigure(1, weight=1)
+
+    def update_dashboard_page(self):
+        if not hasattr(self, "dashboard_cards"):
+            return
+
+        data = self.extracted_data or []
+        suppliers = {self.clean_supplier_name(r.get("supplier")) for r in data if r.get("supplier") and r.get("supplier") != "Unknown"}
+        decision_data = self.get_decision_quotes(data) if data else []
+        numeric_prices = []
+        for r in decision_data:
+            try:
+                price = float(r.get("price"))
+                if price > 0:
+                    numeric_prices.append((price, r))
+            except Exception:
+                pass
+
+        import datetime
+        today = datetime.date.today()
+        expired_count = 0
+        active_count = 0
+        for r in data:
+            try:
+                val = datetime.datetime.strptime(str(r.get("validity_date")), "%Y-%m-%d").date()
+                if val < today:
+                    expired_count += 1
+                else:
+                    active_count += 1
+            except Exception:
+                pass
+
+        high_risk = [r for r in data if "high" in str(r.get("sourcing_risk") or "").lower()]
+        needs_review = [r for r in data if (r.get("review_status") or "Needs Review") == "Needs Review"]
+        approved = [r for r in data if r.get("review_status") == "Approved"]
+        best_price = min(numeric_prices, key=lambda item: item[0])[0] if numeric_prices else None
+
+        self.dashboard_cards["quotes"].configure(text=str(len(data)))
+        self.dashboard_cards["suppliers"].configure(text=str(len(suppliers)))
+        self.dashboard_cards["best"].configure(text=f"${best_price:.5f}" if best_price is not None else "N/A")
+        self.dashboard_cards["review"].configure(text=str(len(needs_review)), text_color=self.THEME["warning"] if needs_review else self.THEME["text"])
+        self.dashboard_cards["approved"].configure(text=str(len(approved)), text_color=self.THEME["success"] if approved else self.THEME["text"])
+        self.dashboard_cards["expired"].configure(text=str(expired_count), text_color=self.THEME["danger"] if expired_count else self.THEME["text"])
+
+        self.dashboard_recent_tree.delete(*self.dashboard_recent_tree.get_children())
+        for r in list(reversed(data))[:12]:
+            price = r.get("price")
+            try:
+                price_txt = f"${float(price):.5f}"
+            except Exception:
+                price_txt = "N/A"
+            status = r.get("review_status") or "Needs Review"
+            self.dashboard_recent_tree.insert(
+                "",
+                tk.END,
+                values=(self.clean_supplier_name(r.get("supplier")), r.get("product") or "N/A", price_txt, status),
+            )
+
+        actions = []
+        if not data:
+            actions.append("Select a supplier quote folder and run extraction to populate the workspace.")
+        if needs_review:
+            actions.append(f"Verify and approve {len(needs_review)} quote rows before using them for sourcing decisions.")
+        if expired_count:
+            actions.append(f"Request refreshed pricing for {expired_count} expired quote rows.")
+        if high_risk:
+            actions.append(f"Review payment terms and supplier exposure for {len(high_risk)} high-risk quote rows.")
+        if active_count and numeric_prices:
+            best_supplier = self.clean_supplier_name(min(numeric_prices, key=lambda item: item[0])[1].get("supplier"))
+            actions.append(f"Use {best_supplier} as the first benchmark in negotiations based on lowest unit price.")
+        actions.append("Keep supplier contact records current before broadcasting RFQs.")
+
+        self.dashboard_actions_box.configure(state="normal")
+        self.dashboard_actions_box.delete("1.0", tk.END)
+        self.dashboard_actions_box.insert("1.0", "\n\n".join(f"- {a}" for a in actions))
+        self.dashboard_actions_box.configure(state="disabled")
 
     def on_closing(self):
         self.is_extracting = False
@@ -827,7 +1396,7 @@ class App(ctk.CTk):
             try:
                 import datetime
                 q_date = datetime.datetime.strptime(match.group(0), "%Y-%m-%d").date()
-                today = datetime.date(2026, 8, 1) # Set current local date 2026-08-01
+                today = datetime.date.today()
                 if q_date < today:
                     return f"🔴 Expired ({match.group(0)})"
                 else:
@@ -881,31 +1450,15 @@ class App(ctk.CTk):
         self.draw_chart()
 
     def setup_table(self, parent):
-        style = ttk.Style()
-        style.theme_use("clam")
-        
-        # Style treeview to match dark mode
-        style.configure("Treeview",
-                        background="#2b2b2b",
-                        foreground="white",
-                        rowheight=35,
-                        fieldbackground="#2b2b2b",
-                        borderwidth=0,
-                        font=("Segoe UI", 11))
-        style.map("Treeview", background=[("selected", "#1f538d")])
-        
-        style.configure("Treeview.Heading",
-                        background="#3c3c3c",
-                        foreground="white",
-                        borderwidth=1,
-                        font=("Segoe UI", 11, "bold"))
+        self.style_workspace_table("Treeview")
         
         # Columns
-        self.columns = ("id", "filename", "supplier", "product", "spec", "color", "elastic", "price", "unit", "moq", "packing", "term", "lead_time", "validity_date", "sourcing_risk")
+        self.columns = ("id", "status", "filename", "supplier", "product", "spec", "color", "elastic", "price", "unit", "moq", "packing", "term", "lead_time", "validity_date", "sourcing_risk")
         self.tree = ttk.Treeview(parent, columns=self.columns, show="headings", style="Treeview")
         
         # Setup column headers with commands for interactive sorting
         self.tree.heading("id", text="ID", command=lambda: self.sort_column("id", False))
+        self.tree.heading("status", text="Review", command=lambda: self.sort_column("review_status", False))
         self.tree.heading("filename", text="Source File", command=lambda: self.sort_column("filename", False))
         self.tree.heading("supplier", text="Supplier", command=lambda: self.sort_column("supplier", False))
         self.tree.heading("product", text="Product", command=lambda: self.sort_column("product", False))
@@ -923,6 +1476,7 @@ class App(ctk.CTk):
 
         # Column widths
         self.tree.column("id", width=40, anchor="center")
+        self.tree.column("status", width=100, anchor="center")
         self.tree.column("filename", width=120, anchor="w")
         self.tree.column("supplier", width=130, anchor="w")
         self.tree.column("product", width=100, anchor="w")
@@ -953,7 +1507,10 @@ class App(ctk.CTk):
         self.tree.bind("<<TreeviewSelect>>", lambda event: self.on_row_selected(event))
 
         # Best Deal highlight tag
-        self.tree.tag_configure("best_deal", background="#1e4620", foreground="#a6ffa6")
+        self.tree.tag_configure("best_deal", background="#DCFCE7", foreground="#14532D")
+        self.tree.tag_configure("needs_review", background="#FEF3C7", foreground="#92400E")
+        self.tree.tag_configure("approved", background="#DCFCE7", foreground="#14532D")
+        self.tree.tag_configure("rejected", background="#FEE2E2", foreground="#991B1B")
 
     # --- Direct Path Entry Handler ---
     def on_path_entered(self):
@@ -990,7 +1547,7 @@ class App(ctk.CTk):
         row_id = vals[0]
         self.update_preview_gallery_bar(row_id, vals)
         
-        filename = vals[1]
+        filename = vals[2]
         self.show_preview(filename)
 
     def clear_preview(self):
@@ -1130,6 +1687,12 @@ class App(ctk.CTk):
         
         return f"{category}_{size_key}"
 
+    def get_decision_quotes(self, rows=None):
+        rows = rows if rows is not None else self.extracted_data
+        non_rejected = [r for r in rows if (r.get("review_status") or "Needs Review") != "Rejected"]
+        approved = [r for r in non_rejected if r.get("review_status") == "Approved"]
+        return approved if approved else non_rejected
+
     # --- Interactive Sorting logic ---
     def sort_column(self, col, reverse):
         def get_sort_val(row_dict):
@@ -1166,6 +1729,11 @@ class App(ctk.CTk):
             c.execute("DELETE FROM processed_files")
             c.execute("DELETE FROM supplier_contacts")
             c.execute("DELETE FROM chat_history")
+            c.execute("DELETE FROM quote_audit_log")
+            c.execute("DELETE FROM master_data_audit_log")
+            c.execute("DELETE FROM rfq_register")
+            c.execute("DELETE FROM po_register")
+            c.execute("DELETE FROM workflow_audit_log")
             conn.commit()
             conn.close()
             
@@ -1194,7 +1762,7 @@ class App(ctk.CTk):
         
         # Recalculate best price comparisons from in-memory quotes (baseline USD)
         groups = {}
-        for r in self.extracted_data:
+        for r in self.get_decision_quotes():
             price = r.get("price")
             try:
                 price = float(price)
@@ -1219,7 +1787,7 @@ class App(ctk.CTk):
             if not query:
                 match = True
             else:
-                fields = ["filename", "supplier", "product", "spec", "color", "elastic", "price", "unit", "moq", "packing", "term", "lead_time", "validity_date", "sourcing_risk"]
+                fields = ["review_status", "filename", "supplier", "product", "spec", "color", "elastic", "price", "unit", "moq", "packing", "term", "lead_time", "validity_date", "sourcing_risk"]
                 for f in fields:
                     if query in str(row_data.get(f) or "").lower():
                         match = True
@@ -1244,10 +1812,25 @@ class App(ctk.CTk):
             except (ValueError, TypeError):
                 pass
                 
-            tags = ("best_deal",) if is_best_deal else ()
+            status = row_data.get("review_status") or "Needs Review"
+            if status == "Approved":
+                status_display = "Approved"
+                status_tag = "approved"
+            elif status == "Rejected":
+                status_display = "Rejected"
+                status_tag = "rejected"
+            else:
+                status_display = "Needs Review"
+                status_tag = "needs_review"
+
+            tags_list = [status_tag]
+            if is_best_deal and status == "Approved":
+                tags_list.append("best_deal")
+            tags = tuple(tags_list)
             
             self.tree.insert("", "end", values=(
                 row_data["id"],
+                status_display,
                 row_data["filename"],
                 row_data["supplier"],
                 row_data["product"],
@@ -1287,7 +1870,8 @@ class App(ctk.CTk):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""
-            SELECT id, filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, validity_date, sourcing_risk, attached_media 
+            SELECT id, filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, validity_date, sourcing_risk, attached_media,
+                   review_status, reviewed_by, reviewed_at, review_notes
             FROM extracted_quotes
         """)
         rows = c.fetchall()
@@ -1310,7 +1894,11 @@ class App(ctk.CTk):
                 "lead_time": row[12],
                 "validity_date": row[13] if len(row) > 13 else "N/A",
                 "sourcing_risk": row[14] if len(row) > 14 else "N/A",
-                "attached_media": row[15] if len(row) > 15 else ""
+                "attached_media": row[15] if len(row) > 15 else "",
+                "review_status": row[16] if len(row) > 16 and row[16] else "Needs Review",
+                "reviewed_by": row[17] if len(row) > 17 else "",
+                "reviewed_at": row[18] if len(row) > 18 else "",
+                "review_notes": row[19] if len(row) > 19 else ""
             }
             self.extracted_data.append(row_data)
 
@@ -1352,6 +1940,15 @@ class App(ctk.CTk):
             self.load_negotiation_dropdowns()
         if hasattr(self, 'barrier_category_cb'):
             self.load_barrier_categories()
+        if hasattr(self, 'dashboard_cards'):
+            self.update_dashboard_page()
+        if hasattr(self, 'supplier_master_tree'):
+            self.load_master_data_tables()
+        if hasattr(self, 'rfq_register_tree'):
+            self.load_rfq_register()
+        if hasattr(self, 'po_register_tree'):
+            self.load_po_register()
+        self.apply_legacy_light_polish()
 
     # --- Persistent Chat History logic ---
     def load_chat_history_from_db(self):
@@ -1378,6 +1975,168 @@ class App(ctk.CTk):
         conn.commit()
         conn.close()
 
+    def log_quote_audit(self, quote_id, action, previous_status=None, new_status=None, note=""):
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO quote_audit_log (quote_id, action, previous_status, new_status, note)
+                VALUES (?, ?, ?, ?, ?)
+            """, (quote_id, action, previous_status, new_status, note))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Failed to write quote audit log: {e}")
+
+    def log_master_audit(self, entity_type, entity_id, action, note=""):
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+                VALUES (?, ?, ?, ?)
+            """, (entity_type, entity_id, action, note))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Failed to write master data audit log: {e}")
+
+    def seed_master_data_from_quotes(self, show_message=True):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        inserted_suppliers = 0
+        inserted_products = 0
+
+        c.execute("""
+            SELECT supplier, MIN(term), GROUP_CONCAT(DISTINCT product)
+            FROM extracted_quotes
+            WHERE supplier IS NOT NULL AND supplier != '' AND supplier != 'Unknown'
+            GROUP BY supplier
+        """)
+        for supplier, payment_terms, categories in c.fetchall():
+            display_name = self.clean_supplier_name(supplier)
+            if not display_name or display_name == "Unknown":
+                continue
+            c.execute("SELECT id FROM supplier_master WHERE display_name = ?", (display_name,))
+            if c.fetchone():
+                continue
+            c.execute("""
+                INSERT INTO supplier_master (legal_name, display_name, category, status, payment_terms, notes)
+                VALUES (?, ?, ?, 'Active', ?, ?)
+            """, (
+                supplier,
+                display_name,
+                (categories or "General")[:120],
+                payment_terms or "",
+                "Seeded from extracted quote history."
+            ))
+            supplier_id = c.lastrowid
+            c.execute("""
+                INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+                VALUES ('Supplier', ?, 'Seeded', ?)
+            """, (supplier_id, f"Created supplier master from quote supplier: {supplier}"))
+            inserted_suppliers += 1
+
+        c.execute("""
+            SELECT product, MIN(spec), MIN(packing), MIN(price)
+            FROM extracted_quotes
+            WHERE product IS NOT NULL AND product != '' AND product != 'N/A'
+            GROUP BY product
+        """)
+        for product, specs, packing, target_price in c.fetchall():
+            product_name = self.clean_product_name(product)
+            if not product_name or product_name == "Product":
+                continue
+            c.execute("SELECT id FROM product_master WHERE product_name = ?", (product_name,))
+            if c.fetchone():
+                continue
+            c.execute("""
+                INSERT INTO product_master (product_name, category, standard_specs, packaging, target_price, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                product_name,
+                product_name,
+                specs or "",
+                packing or "",
+                target_price if target_price is not None else None,
+                "Seeded from extracted quote history."
+            ))
+            product_id = c.lastrowid
+            c.execute("""
+                INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+                VALUES ('Product', ?, 'Seeded', ?)
+            """, (product_id, f"Created product master from quote product: {product}"))
+            inserted_products += 1
+
+        c.execute("""
+            UPDATE extracted_quotes
+            SET supplier_master_id = (
+                SELECT sm.id
+                FROM supplier_master sm
+                WHERE sm.display_name = supplier
+                   OR sm.legal_name = supplier
+                   OR sm.display_name = TRIM(supplier)
+                LIMIT 1
+            )
+            WHERE supplier_master_id IS NULL
+        """)
+        c.execute("""
+            UPDATE extracted_quotes
+            SET product_master_id = (
+                SELECT pm.id
+                FROM product_master pm
+                WHERE LOWER(pm.product_name) = LOWER(TRIM(product))
+                LIMIT 1
+            )
+            WHERE product_master_id IS NULL
+        """)
+
+        conn.commit()
+        conn.close()
+
+        if hasattr(self, "supplier_master_tree"):
+            self.load_master_data_tables()
+        if show_message:
+            messagebox.showinfo(
+                "Master Data Seeded",
+                f"Created {inserted_suppliers} supplier master record(s) and {inserted_products} product master record(s)."
+            )
+
+    def set_selected_quote_status(self, status):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Select Row", "Please select at least one quote row first.")
+            return
+
+        status_notes = {
+            "Approved": "Quote approved for sourcing comparison and downstream PO/RFQ use.",
+            "Needs Review": "Quote returned to review queue for verification.",
+            "Rejected": "Quote rejected from approved sourcing decisions.",
+        }
+        note = status_notes.get(status, "")
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        updated = 0
+        for item in sel:
+            vals = self.tree.item(item, "values")
+            q_id = int(vals[0])
+            current = next((r.get("review_status") for r in self.extracted_data if r.get("id") == q_id), None)
+            c.execute("""
+                UPDATE extracted_quotes
+                SET review_status=?, reviewed_by='Local User', reviewed_at=datetime('now'), review_notes=?
+                WHERE id=?
+            """, (status, note, q_id))
+            c.execute("""
+                INSERT INTO quote_audit_log (quote_id, action, previous_status, new_status, note)
+                VALUES (?, ?, ?, ?, ?)
+            """, (q_id, "Review Status Changed", current, status, note))
+            updated += 1
+        conn.commit()
+        conn.close()
+
+        self.load_all_quotes_from_db()
+        messagebox.showinfo("Review Status Updated", f"Updated {updated} quote row(s) to: {status}")
+
     def sync_suppliers_from_quotes(self):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -1403,6 +2162,423 @@ class App(ctk.CTk):
         
         self.load_supplier_directory()
         messagebox.showinfo("Sync Complete", f"Successfully synced supplier directory!\nAdded {synced_count} new supplier cards.")
+
+    def setup_master_data_tab(self):
+        tab_master = self.settings_tabview.tab("Master Data")
+        tab_master.grid_columnconfigure(0, weight=1)
+        tab_master.grid_columnconfigure(1, weight=1)
+        tab_master.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(tab_master, fg_color="transparent")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            header,
+            text="Enterprise Master Data",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=self.THEME["text"],
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            header,
+            text="Controlled supplier and product records used by quotes, RFQs, scorecards, costing, and POs.",
+            font=ctk.CTkFont(size=12),
+            text_color=self.THEME["muted"],
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+
+        self.btn_seed_master_data = self.make_button(header, "Seed from Quotes", command=self.seed_master_data_from_quotes, variant="success", width=130)
+        self.btn_seed_master_data.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
+        self.btn_refresh_master_data = self.make_button(header, "Refresh", command=self.load_master_data_tables, variant="secondary", width=90)
+        self.btn_refresh_master_data.grid(row=0, column=2, rowspan=2, sticky="e", padx=(8, 0))
+
+        supplier_panel = ctk.CTkFrame(tab_master, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        supplier_panel.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 14))
+        supplier_panel.grid_columnconfigure(0, weight=1)
+        supplier_panel.grid_rowconfigure(1, weight=1)
+
+        supplier_head = ctk.CTkFrame(supplier_panel, fg_color="transparent")
+        supplier_head.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        supplier_head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(supplier_head, text="Supplier Master", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        self.btn_edit_supplier_master = self.make_button(supplier_head, "Edit Supplier", command=self.edit_selected_supplier_master, variant="secondary", width=110)
+        self.btn_edit_supplier_master.grid(row=0, column=1, sticky="e")
+
+        supplier_cols = ("id", "display", "status", "category", "contact", "phone")
+        self.supplier_master_tree = ttk.Treeview(supplier_panel, columns=supplier_cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 45),
+            ("display", "Supplier", 160),
+            ("status", "Status", 85),
+            ("category", "Category", 130),
+            ("contact", "Email / Contact", 150),
+            ("phone", "Phone", 105),
+        ]:
+            self.supplier_master_tree.heading(col, text=label)
+            self.supplier_master_tree.column(col, width=width, anchor="w")
+        self.supplier_master_tree.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+
+        product_panel = ctk.CTkFrame(tab_master, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        product_panel.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 14))
+        product_panel.grid_columnconfigure(0, weight=1)
+        product_panel.grid_rowconfigure(1, weight=1)
+
+        product_head = ctk.CTkFrame(product_panel, fg_color="transparent")
+        product_head.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        product_head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(product_head, text="Product Master", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        self.btn_edit_product_master = self.make_button(product_head, "Edit Product", command=self.edit_selected_product_master, variant="secondary", width=105)
+        self.btn_edit_product_master.grid(row=0, column=1, sticky="e")
+
+        product_cols = ("id", "product", "category", "target", "packaging", "specs")
+        self.product_master_tree = ttk.Treeview(product_panel, columns=product_cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 45),
+            ("product", "Product", 140),
+            ("category", "Category", 100),
+            ("target", "Target", 70),
+            ("packaging", "Packaging", 120),
+            ("specs", "Specs", 160),
+        ]:
+            self.product_master_tree.heading(col, text=label)
+            self.product_master_tree.column(col, width=width, anchor="w")
+        self.product_master_tree.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+
+    def load_master_data_tables(self):
+        if not hasattr(self, "supplier_master_tree"):
+            return
+
+        self.supplier_master_tree.delete(*self.supplier_master_tree.get_children())
+        self.product_master_tree.delete(*self.product_master_tree.get_children())
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, display_name, status, category, COALESCE(email, contact_person, ''), COALESCE(phone, '')
+            FROM supplier_master
+            ORDER BY display_name
+        """)
+        for row in c.fetchall():
+            self.supplier_master_tree.insert("", tk.END, values=row)
+
+        c.execute("""
+            SELECT id, product_name, category, target_price, packaging, standard_specs
+            FROM product_master
+            ORDER BY product_name
+        """)
+        for row in c.fetchall():
+            row = list(row)
+            row[3] = f"${float(row[3]):.5f}" if row[3] is not None else "N/A"
+            self.product_master_tree.insert("", tk.END, values=row)
+        conn.close()
+
+    def edit_selected_supplier_master(self):
+        sel = self.supplier_master_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select Supplier", "Please select a supplier master record first.")
+            return
+        supplier_id = int(self.supplier_master_tree.item(sel[0], "values")[0])
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT legal_name, display_name, country, city, contact_person, email, phone, category, status, payment_terms, certifications, notes
+            FROM supplier_master WHERE id=?
+        """, (supplier_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+
+        fields = [
+            ("Legal Name", "legal_name"),
+            ("Display Name", "display_name"),
+            ("Country", "country"),
+            ("City", "city"),
+            ("Contact Person", "contact_person"),
+            ("Email", "email"),
+            ("Phone / WhatsApp", "phone"),
+            ("Category", "category"),
+            ("Status", "status"),
+            ("Payment Terms", "payment_terms"),
+            ("Certifications", "certifications"),
+            ("Notes", "notes"),
+        ]
+        self.open_master_edit_dialog(
+            "Supplier",
+            supplier_id,
+            fields,
+            dict(zip([f[1] for f in fields], row)),
+            self.save_supplier_master_record,
+        )
+
+    def edit_selected_product_master(self):
+        sel = self.product_master_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select Product", "Please select a product master record first.")
+            return
+        product_id = int(self.product_master_tree.item(sel[0], "values")[0])
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT product_name, category, standard_specs, packaging, carton_cbm, compliance_requirements, target_price, notes
+            FROM product_master WHERE id=?
+        """, (product_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+
+        fields = [
+            ("Product Name", "product_name"),
+            ("Category", "category"),
+            ("Standard Specs", "standard_specs"),
+            ("Packaging", "packaging"),
+            ("Carton CBM", "carton_cbm"),
+            ("Compliance Requirements", "compliance_requirements"),
+            ("Target Price", "target_price"),
+            ("Notes", "notes"),
+        ]
+        self.open_master_edit_dialog(
+            "Product",
+            product_id,
+            fields,
+            dict(zip([f[1] for f in fields], row)),
+            self.save_product_master_record,
+        )
+
+    def open_master_edit_dialog(self, entity_type, entity_id, fields, values, save_callback):
+        edit_win = ctk.CTkToplevel(self)
+        edit_win.title(f"Edit {entity_type} Master #{entity_id}")
+        edit_win.geometry("520x620")
+        edit_win.resizable(False, False)
+        edit_win.attributes("-topmost", True)
+        edit_win.grid_columnconfigure(1, weight=1)
+
+        entries = {}
+        for idx, (label, field) in enumerate(fields):
+            ctk.CTkLabel(edit_win, text=f"{label}:", anchor="w").grid(row=idx, column=0, padx=15, pady=6, sticky="w")
+            if field in {"status"}:
+                entry = ctk.CTkComboBox(edit_win, values=["Active", "Preferred", "Watchlist", "Blocked"], width=300)
+                entry.set(values.get(field) or "Active")
+            else:
+                entry = ctk.CTkEntry(edit_win, width=300)
+                entry.insert(0, "" if values.get(field) is None else str(values.get(field)))
+            entry.grid(row=idx, column=1, padx=15, pady=6, sticky="ew")
+            entries[field] = entry
+
+        def save():
+            payload = {field: widget.get().strip() for field, widget in entries.items()}
+            save_callback(entity_id, payload)
+            edit_win.destroy()
+
+        self.make_button(edit_win, "Save Master Record", command=save, variant="success", width=180).grid(row=len(fields), column=0, columnspan=2, pady=18)
+
+    def save_supplier_master_record(self, supplier_id, payload):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            UPDATE supplier_master
+            SET legal_name=?, display_name=?, country=?, city=?, contact_person=?, email=?, phone=?,
+                category=?, status=?, payment_terms=?, certifications=?, notes=?, updated_at=datetime('now')
+            WHERE id=?
+        """, (
+            payload.get("legal_name"),
+            payload.get("display_name"),
+            payload.get("country"),
+            payload.get("city"),
+            payload.get("contact_person"),
+            payload.get("email"),
+            payload.get("phone"),
+            payload.get("category"),
+            payload.get("status"),
+            payload.get("payment_terms"),
+            payload.get("certifications"),
+            payload.get("notes"),
+            supplier_id,
+        ))
+        c.execute("""
+            INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+            VALUES ('Supplier', ?, 'Updated', ?)
+        """, (supplier_id, "Supplier master edited from Master Data screen."))
+        conn.commit()
+        conn.close()
+        self.load_master_data_tables()
+
+    def save_product_master_record(self, product_id, payload):
+        try:
+            carton_cbm = float(payload.get("carton_cbm")) if payload.get("carton_cbm") else None
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Carton CBM must be numeric.")
+            return
+        try:
+            target_price = float(str(payload.get("target_price") or "").replace("$", "")) if payload.get("target_price") else None
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Target price must be numeric.")
+            return
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            UPDATE product_master
+            SET product_name=?, category=?, standard_specs=?, packaging=?, carton_cbm=?,
+                compliance_requirements=?, target_price=?, notes=?, updated_at=datetime('now')
+            WHERE id=?
+        """, (
+            payload.get("product_name"),
+            payload.get("category"),
+            payload.get("standard_specs"),
+            payload.get("packaging"),
+            carton_cbm,
+            payload.get("compliance_requirements"),
+            target_price,
+            payload.get("notes"),
+            product_id,
+        ))
+        c.execute("""
+            INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+            VALUES ('Product', ?, 'Updated', ?)
+        """, (product_id, "Product master edited from Master Data screen."))
+        conn.commit()
+        conn.close()
+        self.load_master_data_tables()
+
+    def get_product_master_id_by_name(self, product_name):
+        if not product_name:
+            return None
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT id FROM product_master WHERE LOWER(product_name)=LOWER(?) LIMIT 1", (self.clean_product_name(product_name),))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    def get_supplier_master_id_by_name(self, supplier_name):
+        if not supplier_name:
+            return None
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id FROM supplier_master
+            WHERE LOWER(display_name)=LOWER(?) OR LOWER(legal_name)=LOWER(?)
+            LIMIT 1
+        """, (self.clean_supplier_name(supplier_name), str(supplier_name).strip()))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    def save_rfq_record(self, status="Draft", pdf_path=""):
+        product_name = self.rfq_name_entry.get().strip() or self.rfq_product_cb.get().strip()
+        if not product_name or product_name == "Custom":
+            return None
+        import datetime
+        rfq_number = f"RFQ-{datetime.date.today().strftime('%Y%m%d')}-{product_name[:4].upper()}"
+        product_master_id = self.get_product_master_id_by_name(product_name)
+        payload = (
+            rfq_number,
+            product_master_id,
+            product_name,
+            self.rfq_qty_entry.get().strip(),
+            self.rfq_term_cb.get().strip(),
+            self.rfq_lead_entry.get().strip(),
+            self.rfq_payment_entry.get().strip(),
+            "",
+            status,
+            pdf_path,
+            self.rfq_specs_text.get("1.0", tk.END).strip(),
+        )
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO rfq_register (
+                rfq_number, product_master_id, product_name, target_quantity, price_terms,
+                lead_time, payment_terms, selected_suppliers, status, pdf_path, specs
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rfq_number) DO UPDATE SET
+                product_master_id=excluded.product_master_id,
+                product_name=excluded.product_name,
+                target_quantity=excluded.target_quantity,
+                price_terms=excluded.price_terms,
+                lead_time=excluded.lead_time,
+                payment_terms=excluded.payment_terms,
+                selected_suppliers=excluded.selected_suppliers,
+                status=excluded.status,
+                pdf_path=COALESCE(NULLIF(excluded.pdf_path, ''), rfq_register.pdf_path),
+                specs=excluded.specs,
+                updated_at=datetime('now')
+        """, payload)
+        c.execute("SELECT id FROM rfq_register WHERE rfq_number=?", (rfq_number,))
+        rfq_id = c.fetchone()[0]
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES ('RFQ', ?, 'Saved', ?, ?)
+        """, (rfq_id, status, f"RFQ record saved for {product_name}."))
+        conn.commit()
+        conn.close()
+        if hasattr(self, "rfq_register_tree"):
+            self.load_rfq_register()
+        return rfq_id
+
+    def save_po_record(self, status="Issued", pdf_path=""):
+        supplier = self.po_supplier_cb.get()
+        product = self.po_product_cb.get()
+        po_num = self.po_number_entry.get().strip()
+        try:
+            qty = int(self.po_qty_entry.get().strip().replace(",", ""))
+        except Exception:
+            qty = 0
+        unit_price = getattr(self, 'po_active_price', 0.0)
+        total_cost = qty * unit_price
+        quote = getattr(self, "po_active_quote", None) or {}
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO po_register (
+                po_number, supplier_master_id, product_master_id, quote_id, supplier_name, product_name,
+                quantity, unit_cost, total_value, payment_terms, delivery_address, status, pdf_path
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(po_number) DO UPDATE SET
+                supplier_master_id=excluded.supplier_master_id,
+                product_master_id=excluded.product_master_id,
+                quote_id=excluded.quote_id,
+                supplier_name=excluded.supplier_name,
+                product_name=excluded.product_name,
+                quantity=excluded.quantity,
+                unit_cost=excluded.unit_cost,
+                total_value=excluded.total_value,
+                payment_terms=excluded.payment_terms,
+                delivery_address=excluded.delivery_address,
+                status=excluded.status,
+                pdf_path=COALESCE(NULLIF(excluded.pdf_path, ''), po_register.pdf_path),
+                updated_at=datetime('now')
+        """, (
+            po_num,
+            quote.get("supplier_master_id") or self.get_supplier_master_id_by_name(supplier),
+            quote.get("product_master_id") or self.get_product_master_id_by_name(product),
+            quote.get("id"),
+            supplier,
+            product,
+            qty,
+            unit_price,
+            total_cost,
+            self.po_payment_entry.get().strip(),
+            self.po_address_entry.get().strip(),
+            status,
+            pdf_path,
+        ))
+        c.execute("SELECT id FROM po_register WHERE po_number=?", (po_num,))
+        po_id = c.fetchone()[0]
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES ('PO', ?, 'Saved', ?, ?)
+        """, (po_id, status, f"PO record saved for {supplier} / {product}."))
+        conn.commit()
+        conn.close()
+        if hasattr(self, "po_register_tree"):
+            self.load_po_register()
+        return po_id
 
     def start_contact_extraction_thread(self):
         if not self.api_key:
@@ -1621,18 +2797,18 @@ class App(ctk.CTk):
             return
             
         for supplier, contact_info, source_file in rows:
-            card = ctk.CTkFrame(self.directory_scroll_frame, corner_radius=8, border_width=1, border_color="#3c3c3c")
-            card.pack(fill="x", padx=10, pady=5)
+            card = ctk.CTkFrame(self.directory_scroll_frame, fg_color=self.THEME["surface"], corner_radius=8, border_width=1, border_color=self.THEME["border"])
+            card.pack(fill="x", padx=12, pady=7)
             
-            title = ctk.CTkLabel(card, text=supplier, font=ctk.CTkFont(size=14, weight="bold"))
-            title.pack(anchor="w", padx=15, pady=(10, 2))
+            title = ctk.CTkLabel(card, text=supplier, font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"])
+            title.pack(anchor="w", padx=16, pady=(12, 4))
             
-            info_lbl = ctk.CTkLabel(card, text=contact_info, text_color="lightgrey", justify="left")
-            info_lbl.pack(anchor="w", padx=15, pady=(2, 2))
+            info_lbl = ctk.CTkLabel(card, text=contact_info, text_color=self.THEME["muted"], justify="left")
+            info_lbl.pack(anchor="w", padx=16, pady=(2, 2))
             
             src_val = source_file or "N/A"
-            src_lbl = ctk.CTkLabel(card, text=f"Source: {src_val}", text_color="grey", font=ctk.CTkFont(size=10, slant="italic"))
-            src_lbl.pack(anchor="w", padx=15, pady=(2, 10))
+            src_lbl = ctk.CTkLabel(card, text=f"Source: {src_val}", text_color=self.THEME["muted"], font=ctk.CTkFont(size=10, slant="italic"))
+            src_lbl.pack(anchor="w", padx=16, pady=(2, 10))
             
             btn_frame = ctk.CTkFrame(card, fg_color="transparent")
             btn_frame.pack(fill="x", padx=15, pady=(0, 10), anchor="e")
@@ -1642,13 +2818,18 @@ class App(ctk.CTk):
             
             if email:
                 btn_email = ctk.CTkButton(btn_frame, text="📧 Email", width=70, height=22, command=lambda e=email: self.open_email(e))
+                btn_email.configure(text="Email", fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], corner_radius=6, height=24)
                 btn_email.pack(side="left", padx=2)
             if phone:
                 btn_wa = ctk.CTkButton(btn_frame, text="💬 WhatsApp", width=80, height=22, fg_color="#1f7d44", hover_color="#15592e", command=lambda p=phone: self.open_whatsapp(p))
+                btn_wa.configure(text="WhatsApp", fg_color=self.THEME["success"], hover_color=self.THEME["success_hover"], corner_radius=6, height=24)
                 btn_wa.pack(side="left", padx=2)
                 
             btn_edit = ctk.CTkButton(btn_frame, text="✏ Edit Info", width=70, height=22, command=lambda s=supplier, c_info=contact_info: self.edit_supplier_contact(s, c_info))
+            btn_edit.configure(text="Edit Info", fg_color="#3B82C4", hover_color="#2C6DA6", corner_radius=6, height=24)
             btn_edit.pack(side="right", padx=2)
+
+        self.apply_legacy_light_polish(self.directory_scroll_frame)
 
     def extract_email_from_text(self, text):
         import re
@@ -1813,25 +2994,25 @@ class App(ctk.CTk):
         df["label"] = df["supplier"].apply(self.clean_supplier_name) + "\n(" + df["product"].apply(self.clean_product_name) + ")"
         
         fig, ax = plt.subplots(figsize=(8, 4.5), dpi=100)
-        fig.patch.set_facecolor('#2b2b2b')
-        ax.set_facecolor('#2b2b2b')
+        fig.patch.set_facecolor(self.THEME["surface"])
+        ax.set_facecolor(self.THEME["surface"])
         
         bars = ax.bar(df["label"], df["price"], color="#1f538d", edgecolor="#1a4473")
         
-        ax.set_title(f"Price Comparison: {category.capitalize()}", color="white", fontsize=12, pad=15)
-        ax.set_ylabel(f"Unit Price ({currency_name})", color="white", fontsize=10)
-        ax.tick_params(colors="white", labelsize=8)
+        ax.set_title(f"Price Comparison: {category.capitalize()}", color=self.THEME["text"], fontsize=12, pad=15)
+        ax.set_ylabel(f"Unit Price ({currency_name})", color=self.THEME["muted"], fontsize=10)
+        ax.tick_params(colors=self.THEME["muted"], labelsize=8)
         
         plt.xticks(rotation=15, ha="right")
-        ax.yaxis.grid(True, linestyle="--", alpha=0.3, color="white")
+        ax.yaxis.grid(True, linestyle="--", alpha=0.9, color=self.THEME["border"])
         ax.set_axisbelow(True)
         
         for spine in ax.spines.values():
-            spine.set_edgecolor('#3c3c3c')
+            spine.set_edgecolor(self.THEME["border"])
             
         for bar in bars:
             yval = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2.0, yval, f"{symbol}{yval:.5f}", ha='center', va='bottom', color='white', fontsize=7.5)
+            ax.text(bar.get_x() + bar.get_width()/2.0, yval, f"{symbol}{yval:.5f}", ha='center', va='bottom', color=self.THEME["text"], fontsize=7.5)
             
         plt.tight_layout()
         
@@ -1930,17 +3111,20 @@ class App(ctk.CTk):
         # Show selected page
         self.pages[page_name].grid(row=0, column=0, sticky="nsew")
         self.active_page = page_name
+        if page_name == "Dashboard":
+            self.update_dashboard_page()
+        self.apply_legacy_light_polish(self.pages[page_name])
         
         # Highlight active sidebar button
         for name, btn in self.sidebar_buttons.items():
             if name == page_name:
-                btn.configure(fg_color="#1f538d")
+                btn.configure(fg_color=self.THEME["primary"], text_color="white")
             else:
-                btn.configure(fg_color="transparent")
+                btn.configure(fg_color="transparent", text_color="#D1D5DB")
                 
         # Toggle document preview frame visibility based on page and user visibility preference
         if page_name in ["Sourcing Analysis", "Settings Directory"] and self.document_preview_visible:
-            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 14), pady=14)
             self.grid_columnconfigure(2, minsize=360, weight=0)
         else:
             self.preview_frame.grid_forget()
@@ -2049,8 +3233,8 @@ class App(ctk.CTk):
         quotes = data.get("quotes") or []
         for quote in quotes:
             c.execute("""
-                INSERT INTO extracted_quotes (filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, validity_date, sourcing_risk)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO extracted_quotes (filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, validity_date, sourcing_risk, review_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 filename,
                 supplier,
@@ -2065,7 +3249,8 @@ class App(ctk.CTk):
                 term,
                 lead_time,
                 validity_date,
-                sourcing_risk
+                sourcing_risk,
+                "Needs Review"
             ))
         conn.commit()
         conn.close()
@@ -2395,8 +3580,8 @@ class App(ctk.CTk):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""
-            INSERT INTO extracted_quotes (filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO extracted_quotes (filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, review_status, review_notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             "Manually Added", 
             "New Supplier", 
@@ -2409,11 +3594,14 @@ class App(ctk.CTk):
             "N/A", 
             "N/A", 
             "EXW/FOB", 
-            "N/A"
+            "N/A",
+            "Needs Review",
+            "Manually added quote awaiting verification."
         ))
         conn.commit()
         last_id = c.lastrowid
         conn.close()
+        self.log_quote_audit(last_id, "Manual Quote Added", None, "Needs Review", "Manual quote created from the comparison grid.")
         
         self.load_all_quotes_from_db()
         
@@ -2437,7 +3625,18 @@ class App(ctk.CTk):
             for item in sel:
                 vals = self.tree.item(item, "values")
                 q_id = int(vals[0])
+                current = next((r for r in self.extracted_data if r.get("id") == q_id), {})
                 c.execute("DELETE FROM extracted_quotes WHERE id = ?", (q_id,))
+                c.execute("""
+                    INSERT INTO quote_audit_log (quote_id, action, previous_status, new_status, note)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    q_id,
+                    "Quote Deleted",
+                    current.get("review_status"),
+                    None,
+                    f"Deleted quote for {current.get('supplier', 'Unknown')} / {current.get('product', 'Unknown')}"
+                ))
             conn.commit()
             conn.close()
             self.load_all_quotes_from_db()
@@ -2505,7 +3704,7 @@ class App(ctk.CTk):
             c = conn.cursor()
             c.execute("""
                 UPDATE extracted_quotes 
-                SET supplier=?, product=?, spec=?, color=?, elastic=?, price=?, unit=?, moq=?, packing=?, term=?, lead_time=?, validity_date=?, sourcing_risk=?
+                SET supplier=?, product=?, spec=?, color=?, elastic=?, price=?, unit=?, moq=?, packing=?, term=?, lead_time=?, validity_date=?, sourcing_risk=?, review_status='Needs Review', reviewed_by='Local User', reviewed_at=datetime('now'), review_notes='Edited quote requires re-approval.'
                 WHERE id=?
             """, (
                 entries["supplier"].get(),
@@ -2522,6 +3721,16 @@ class App(ctk.CTk):
                 entries["validity_date"].get(),
                 entries["sourcing_risk"].get(),
                 q_id
+            ))
+            c.execute("""
+                INSERT INTO quote_audit_log (quote_id, action, previous_status, new_status, note)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                q_id,
+                "Quote Edited",
+                row_dict.get("review_status"),
+                "Needs Review",
+                "Manual edit saved; quote returned to review queue."
             ))
             conn.commit()
             conn.close()
@@ -3207,6 +4416,13 @@ class App(ctk.CTk):
         self.clipboard_append(email_content)
         messagebox.showinfo("Copied", "Negotiation email copied to clipboard successfully!")
 
+    def copy_to_clipboard(self, text):
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        messagebox.showinfo("Copied", "Text copied to clipboard successfully!")
+
     def select_files(self):
         file_paths = filedialog.askopenfilenames(
             title="Select Supplier Quotes",
@@ -3358,27 +4574,16 @@ class App(ctk.CTk):
         scorecard_lbl.pack(side="right", padx=5)
 
         # --- LEFT COLUMN: Treeview Scorecard Table ---
-        table_frame = ctk.CTkFrame(tab_scorecard, fg_color="#2b2b2b")
+        table_frame = ctk.CTkFrame(tab_scorecard, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         table_frame.grid(row=1, column=0, padx=(20, 10), pady=10, sticky="nsew")
         table_frame.grid_columnconfigure(0, weight=1)
         table_frame.grid_rowconfigure(0, weight=1)
 
         # Set up custom styles for Scorecard treeview
+        self.style_workspace_table("Scorecard.Treeview")
         style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Scorecard.Treeview",
-                        background="#2b2b2b",
-                        foreground="white",
-                        rowheight=35,
-                        fieldbackground="#2b2b2b",
-                        borderwidth=0,
-                        font=("Segoe UI", 11))
-        style.map("Scorecard.Treeview", background=[('selected', '#1f538d')])
-        style.configure("Scorecard.Treeview.Heading",
-                        background="#1f538d",
-                        foreground="white",
-                        font=("Segoe UI", 11, "bold"),
-                        borderwidth=0)
+        style.configure("Scorecard.Treeview", rowheight=31, font=("Segoe UI", 10))
+        style.configure("Scorecard.Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         cols = ("Rank", "Supplier", "Product", "Price", "MOQ", "Lead Time", "Risk", "Score", "Rating")
         self.scorecard_tree = ttk.Treeview(table_frame, columns=cols, show="headings", style="Scorecard.Treeview")
@@ -3412,7 +4617,13 @@ class App(ctk.CTk):
         self.rec_card.grid(row=2, column=0, padx=(20, 10), pady=(5, 15), sticky="ew")
 
         # --- RIGHT COLUMN: Sourcing Weight Simulator ---
-        self.scorecard_sim_frame = ctk.CTkFrame(tab_scorecard)
+        self.scorecard_sim_frame = ctk.CTkFrame(
+            tab_scorecard,
+            fg_color=self.THEME["surface"],
+            border_color=self.THEME["border"],
+            border_width=1,
+            corner_radius=8,
+        )
         self.scorecard_sim_frame.grid(row=1, column=1, rowspan=2, padx=(10, 20), pady=10, sticky="nsew")
         self.scorecard_sim_frame.grid_columnconfigure(0, weight=1)
 
@@ -3450,7 +4661,7 @@ class App(ctk.CTk):
         self.slider_risk.set(20)
 
         # Reset button
-        btn_reset_weights = ctk.CTkButton(self.scorecard_sim_frame, text="Reset Defaults", command=self.reset_weights, fg_color="#3c3c3c")
+        btn_reset_weights = self.make_button(self.scorecard_sim_frame, text="Reset Defaults", command=self.reset_weights, variant="secondary")
         btn_reset_weights.grid(row=9, column=0, padx=15, pady=25, sticky="ew")
 
     def update_scorecard_tab(self):
@@ -3495,9 +4706,9 @@ class App(ctk.CTk):
         category = self.scorecard_category_cb.get()
         
         # Filter quotes by selected category
-        filtered_data = self.extracted_data
+        filtered_data = self.get_decision_quotes()
         if category and category != "All":
-            filtered_data = [r for r in self.extracted_data if (r.get("product") or "").strip().lower() == category.lower()]
+            filtered_data = [r for r in filtered_data if (r.get("product") or "").strip().lower() == category.lower()]
             
         if not filtered_data:
             return []
@@ -3698,7 +4909,7 @@ class App(ctk.CTk):
             widget.destroy()
 
         if not vals:
-            ctk.CTkLabel(self.preview_metrics_frame, text="Select a quote to view key details", font=("Segoe UI", 10, "italic"), text_color="grey").pack(pady=10)
+            ctk.CTkLabel(self.preview_metrics_frame, text="Select a quote to view key details", font=("Segoe UI", 10, "italic"), text_color=self.THEME["muted"]).pack(pady=10)
             return
 
         self.preview_metrics_frame.grid_columnconfigure(0, weight=1)
@@ -3708,22 +4919,23 @@ class App(ctk.CTk):
         ctk.CTkLabel(self.preview_metrics_frame, text="🔍 Extracted AI Sourcing Metrics", font=ctk.CTkFont(size=11, weight="bold"), text_color="#a6e3e9").grid(row=0, column=0, columnspan=2, pady=(8, 4))
 
         metrics = [
-            ("Supplier:", vals[2], "#1f538d"),
-            ("Product:", vals[3], "#15592e"),
-            ("Price:", f"${vals[7]} / {vals[8]}", "#6e4513"),
-            ("MOQ:", vals[9], "#5a1f1f"),
-            ("Lead Time:", vals[12], "#1f538d"),
-            ("Validity:", vals[13], "#6e4513"),
-            ("Risk Alert:", vals[14], "#5a1f1f")
+            ("Status:", vals[1], "#92400E"),
+            ("Supplier:", vals[3], "#1f538d"),
+            ("Product:", vals[4], "#15592e"),
+            ("Price:", f"${vals[8]} / {vals[9]}", "#6e4513"),
+            ("MOQ:", vals[10], "#5a1f1f"),
+            ("Lead Time:", vals[13], "#1f538d"),
+            ("Validity:", vals[14], "#6e4513"),
+            ("Risk Alert:", vals[15], "#5a1f1f")
         ]
 
         for idx, (label, val, color) in enumerate(metrics):
-            lbl = ctk.CTkLabel(self.preview_metrics_frame, text=label, font=ctk.CTkFont(size=10, weight="bold"), anchor="w")
+            lbl = ctk.CTkLabel(self.preview_metrics_frame, text=label, font=ctk.CTkFont(size=10, weight="bold"), anchor="w", text_color=self.THEME["text"])
             lbl.grid(row=idx+1, column=0, sticky="w", padx=10, pady=2)
             
             # Format status values nicely
             val_str = str(val)
-            val_lbl = ctk.CTkLabel(self.preview_metrics_frame, text=val_str, font=ctk.CTkFont(size=10), anchor="w", wraplength=180, justify="left")
+            val_lbl = ctk.CTkLabel(self.preview_metrics_frame, text=val_str, font=ctk.CTkFont(size=10), anchor="w", wraplength=180, justify="left", text_color=self.THEME["muted"])
             val_lbl.grid(row=idx+1, column=1, sticky="w", padx=10, pady=2)
 
     def setup_timeline_tab(self):
@@ -3744,7 +4956,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(left_frame, text="📅 Quote Expiration Alerts", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
         
-        self.expiration_scroll = ctk.CTkScrollableFrame(left_frame, fg_color="#2b2b2b")
+        self.expiration_scroll = ctk.CTkScrollableFrame(left_frame, fg_color=self.THEME["surface_soft"])
         self.expiration_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
         self.expiration_scroll.grid_columnconfigure(0, weight=1)
 
@@ -3773,7 +4985,7 @@ class App(ctk.CTk):
         self.order_date_entry.bind("<FocusOut>", lambda e: self.update_timeline_tab())
 
         # Timeline display scroll frame
-        self.timeline_display_scroll = ctk.CTkScrollableFrame(right_frame, fg_color="#2b2b2b")
+        self.timeline_display_scroll = ctk.CTkScrollableFrame(right_frame, fg_color=self.THEME["surface_soft"])
         self.timeline_display_scroll.grid(row=2, column=0, padx=15, pady=10, sticky="nsew")
         self.timeline_display_scroll.grid_columnconfigure(0, weight=1)
 
@@ -3818,20 +5030,20 @@ class App(ctk.CTk):
                         delta = (val_date - today).days
                         if delta < 0:
                             status_text = f"🔴 Expired (on {val_date_str})"
-                            text_color = "#ffa6a6"
-                            bg_color = "#4d1e1e"
+                            text_color = "#991B1B"
+                            bg_color = "#FEF2F2"
                         elif delta <= 14:
                             status_text = f"🟡 Expiry Warning ({delta} days left)"
-                            text_color = "#ffefa6"
-                            bg_color = "#4d3d1e"
+                            text_color = "#92400E"
+                            bg_color = "#FEF3C7"
                         else:
                             status_text = f"🟢 Active ({delta} days left)"
                     except Exception:
                         pass
                 else:
                     status_text = "⚪ Validity Unknown"
-                    text_color = "#cccccc"
-                    bg_color = "#3a3a3a"
+                    text_color = self.THEME["muted"]
+                    bg_color = self.THEME["surface_alt"]
 
                 row_fr = ctk.CTkFrame(self.expiration_scroll, fg_color=bg_color, height=45)
                 row_fr.pack(fill="x", pady=3, padx=5)
@@ -3869,8 +5081,8 @@ class App(ctk.CTk):
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         
         fig, ax = plt.subplots(figsize=(6, 3.5), dpi=100)
-        fig.patch.set_facecolor('#2b2b2b')
-        ax.set_facecolor('#2b2b2b')
+        fig.patch.set_facecolor(self.THEME["surface"])
+        ax.set_facecolor(self.THEME["surface"])
         
         y_ticks = []
         y_labels = []
@@ -3899,18 +5111,19 @@ class App(ctk.CTk):
             start_ship = lead_days
             end_ship = lead_days + 30 # default 30 days transit
             
-            ax.barh(idx, end_prod - start_prod, left=start_prod, height=0.4, color="#1f538d", align='center')
-            ax.barh(idx, end_ship - start_ship, left=start_ship, height=0.4, color="#15592e", align='center')
+            ax.barh(idx, end_prod - start_prod, left=start_prod, height=0.4, color=self.THEME["primary"], align='center')
+            ax.barh(idx, end_ship - start_ship, left=start_ship, height=0.4, color=self.THEME["success"], align='center')
             
             y_ticks.append(idx)
             label_text = f"{sup[:15]} ({prod[:10]})"
             y_labels.append(label_text)
             
         ax.set_yticks(y_ticks)
-        ax.set_yticklabels(y_labels, color="white", fontsize=8)
-        ax.set_xlabel("Timeline (Days from Order Date)", color="white", fontsize=9)
-        ax.xaxis.label.set_color("white")
-        ax.tick_params(colors="white", labelsize=8)
+        ax.set_yticklabels(y_labels, color=self.THEME["text"], fontsize=8)
+        ax.set_xlabel("Timeline (Days from Order Date)", color=self.THEME["muted"], fontsize=9)
+        ax.xaxis.label.set_color(self.THEME["muted"])
+        ax.tick_params(colors=self.THEME["muted"], labelsize=8)
+        ax.grid(axis="x", color=self.THEME["border"], linestyle="--", linewidth=0.8)
         
         # Remove borders
         for spine in ax.spines.values():
@@ -3919,12 +5132,12 @@ class App(ctk.CTk):
         # Add legend
         from matplotlib.patches import Patch
         legend_elements = [
-            Patch(facecolor='#1f538d', label='Production'),
-            Patch(facecolor='#15592e', label='Transit/Sea Freight')
+            Patch(facecolor=self.THEME["primary"], label='Production'),
+            Patch(facecolor=self.THEME["success"], label='Transit/Sea Freight')
         ]
-        leg = ax.legend(handles=legend_elements, loc='upper right', facecolor='#2b2b2b', edgecolor='none')
+        leg = ax.legend(handles=legend_elements, loc='upper right', facecolor=self.THEME["surface"], edgecolor='none')
         for text in leg.get_texts():
-            text.set_color("white")
+            text.set_color(self.THEME["text"])
             text.set_fontsize(7)
             
         fig.tight_layout()
@@ -3946,7 +5159,7 @@ class App(ctk.CTk):
                 attached_media_str = r.get("attached_media") or ""
                 break
 
-        options = [("📄 Quote", "quote", vals[1])]
+        options = [("📄 Quote", "quote", vals[2])]
         
         if attached_media_str:
             media_files = attached_media_str.split(";")
@@ -4031,8 +5244,8 @@ class App(ctk.CTk):
         item = sel[0]
         vals = self.tree.item(item, "values")
         row_id = vals[0]
-        supplier = vals[2]
-        product = vals[3]
+        supplier = vals[3]
+        product = vals[4]
 
         files = filedialog.askopenfilenames(
             title="Attach Images/Videos to Quotation",
@@ -4381,7 +5594,7 @@ class App(ctk.CTk):
         self.sim_tree.column("landed_pc", width=95, anchor="center")
         self.sim_tree.column("total_cost", width=105, anchor="center")
 
-        self.sim_tree.tag_configure("winner", background="#1e4620", foreground="white")
+        self.sim_tree.tag_configure("winner", background="#DCFCE7", foreground="#14532D")
 
     def on_freight_mode_changed(self, mode):
         if mode == "LCL (per CBM)":
@@ -4567,7 +5780,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(left_frame, text="📦 Select Products & Quantities", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
 
-        self.opt_scroll = ctk.CTkScrollableFrame(left_frame, fg_color="#2b2b2b")
+        self.opt_scroll = ctk.CTkScrollableFrame(left_frame, fg_color=self.THEME["surface_soft"])
         self.opt_scroll.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
         self.opt_scroll.grid_columnconfigure(1, weight=1)
 
@@ -4596,7 +5809,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(right_frame, text="⚡ Optimization Results & Strategy", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
 
-        self.opt_results_scroll = ctk.CTkScrollableFrame(right_frame, fg_color="#2b2b2b")
+        self.opt_results_scroll = ctk.CTkScrollableFrame(right_frame, fg_color=self.THEME["surface_soft"])
         self.opt_results_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
         self.opt_results_scroll.grid_columnconfigure(0, weight=1)
 
@@ -4933,6 +6146,79 @@ class App(ctk.CTk):
         self.btn_broadcast_rfq = ctk.CTkButton(action_fr, text="📡 Broadcast RFQ", fg_color="#6e4513", hover_color="#52320b", command=self.open_rfq_broadcast_popup)
         self.btn_broadcast_rfq.pack(side="left", padx=5)
 
+        self.btn_save_rfq_draft = self.make_button(action_fr, "Save Draft", command=lambda: self.save_rfq_record("Draft"), variant="secondary", width=95)
+        self.btn_save_rfq_draft.pack(side="left", padx=5)
+
+    def setup_rfq_register_tab(self):
+        tab = self.rfqs_tabview.tab("RFQ Register")
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(tab, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="RFQ Register", font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text="Saved sourcing requests with status, target quantity, terms, and generated document path.", font=ctk.CTkFont(size=12), text_color=self.THEME["muted"]).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.make_button(header, "Refresh", command=self.load_rfq_register, variant="secondary", width=90).grid(row=0, column=1, rowspan=2, padx=5)
+        self.make_button(header, "Mark Sent", command=lambda: self.update_selected_rfq_status("Sent"), variant="primary", width=90).grid(row=0, column=2, rowspan=2, padx=5)
+        self.make_button(header, "Close", command=lambda: self.update_selected_rfq_status("Closed"), variant="success", width=80).grid(row=0, column=3, rowspan=2, padx=5)
+        self.make_button(header, "Cancel", command=lambda: self.update_selected_rfq_status("Cancelled"), variant="danger", width=80).grid(row=0, column=4, rowspan=2, padx=5)
+
+        frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+
+        cols = ("id", "rfq", "product", "qty", "terms", "deadline", "status", "pdf")
+        self.rfq_register_tree = ttk.Treeview(frame, columns=cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 50),
+            ("rfq", "RFQ No.", 150),
+            ("product", "Product", 160),
+            ("qty", "Qty", 90),
+            ("terms", "Terms", 90),
+            ("deadline", "Lead Time", 90),
+            ("status", "Status", 90),
+            ("pdf", "PDF Path", 260),
+        ]:
+            self.rfq_register_tree.heading(col, text=label)
+            self.rfq_register_tree.column(col, width=width, anchor="w")
+        self.rfq_register_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.load_rfq_register()
+
+    def load_rfq_register(self):
+        if not hasattr(self, "rfq_register_tree"):
+            return
+        self.rfq_register_tree.delete(*self.rfq_register_tree.get_children())
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, rfq_number, product_name, target_quantity, price_terms, lead_time, status, COALESCE(pdf_path, '')
+            FROM rfq_register
+            ORDER BY updated_at DESC, id DESC
+        """)
+        for row in c.fetchall():
+            self.rfq_register_tree.insert("", tk.END, values=row)
+        conn.close()
+
+    def update_selected_rfq_status(self, status):
+        sel = self.rfq_register_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select RFQ", "Please select an RFQ record first.")
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        for item in sel:
+            rfq_id = int(self.rfq_register_tree.item(item, "values")[0])
+            c.execute("UPDATE rfq_register SET status=?, updated_at=datetime('now') WHERE id=?", (status, rfq_id))
+            c.execute("""
+                INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+                VALUES ('RFQ', ?, 'Status Changed', ?, ?)
+            """, (rfq_id, status, f"RFQ marked {status}."))
+        conn.commit()
+        conn.close()
+        self.load_rfq_register()
+
     def on_rfq_product_changed(self, choice):
         if choice == "Custom":
             self.rfq_name_entry.delete(0, tk.END)
@@ -5124,6 +6410,7 @@ class App(ctk.CTk):
             self.rfq_preview_box.delete("1.0", tk.END)
             self.rfq_preview_box.insert("1.0", f"✅ RFQ PDF generated successfully!\nSaved to: {file_path}\n\n=== Sourcing Target Summary ===\nProduct: {prod_name}\nQuantity: {qty}\nPrice Terms: {terms}\nLead Time: {lead_time}\nPayment Terms: {payments}\n\n=== Specifications Draft ===\n{specs}")
             self.rfq_preview_box.configure(state="disabled")
+            self.save_rfq_record("Draft", file_path)
             
             messagebox.showinfo("Success", f"RFQ PDF saved successfully at:\n{file_path}!")
         except Exception as e:
@@ -5224,7 +6511,7 @@ class App(ctk.CTk):
         self.profit_tree.column("net_margin", width=90, anchor="center")
         self.profit_tree.column("roi", width=80, anchor="center")
 
-        self.profit_tree.tag_configure("winner", background="#1e4620", foreground="white")
+        self.profit_tree.tag_configure("winner", background="#DCFCE7", foreground="#14532D")
 
     def update_profit_simulator_tab(self):
         for item in self.profit_tree.get_children():
@@ -5855,6 +7142,21 @@ class App(ctk.CTk):
         lead_time = self.rfq_lead_entry.get().strip() or "30 days"
         payment_term = self.rfq_payment_entry.get().strip() or "30/70"
         specs = self.rfq_specs_text.get("1.0", "end-1c").strip()
+        rfq_id = self.save_rfq_record("Sent")
+        if rfq_id:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute(
+                "UPDATE rfq_register SET selected_suppliers=?, updated_at=datetime('now') WHERE id=?",
+                (", ".join(selected_suppliers), rfq_id)
+            )
+            c.execute("""
+                INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+                VALUES ('RFQ', ?, 'Outreach Generated', 'Sent', ?)
+            """, (rfq_id, f"RFQ outreach generated for {len(selected_suppliers)} supplier(s)."))
+            conn.commit()
+            conn.close()
+            self.load_rfq_register()
 
         for s in selected_suppliers:
             tab_control.add(s)
@@ -6126,21 +7428,21 @@ AI TARIFF & COMPLIANCE DETAIL:
         angles = np.concatenate((angles,[angles[0]]))
 
         fig, ax = plt.subplots(figsize=(2.2, 2.2), subplot_kw=dict(polar=True), dpi=100)
-        fig.patch.set_facecolor('#2b2b2b')
-        ax.set_facecolor('#2b2b2b')
+        fig.patch.set_facecolor(self.THEME["surface"])
+        ax.set_facecolor(self.THEME["surface"])
 
         ax.plot(angles, stats, color='#1f538d', linewidth=2)
         ax.fill(angles, stats, color='#1f538d', alpha=0.25)
 
-        ax.set_thetagrids(np.degrees(angles[:-1]), labels, color='white', fontsize=8)
+        ax.set_thetagrids(np.degrees(angles[:-1]), labels, color=self.THEME["text"], fontsize=8)
         ax.set_ylim(0, 100)
         ax.set_rgrids([25, 50, 75, 100], angle=0)
-        ax.tick_params(colors='white')
+        ax.tick_params(colors=self.THEME["muted"])
         
         ax.spines['polar'].set_visible(False)
-        ax.grid(color='#4c4c4c', linestyle='--')
+        ax.grid(color=self.THEME["border"], linestyle='--')
 
-        ax.set_title(f"Strengths: {supplier_name[:12]}", color='white', fontsize=9, pad=10)
+        ax.set_title(f"Strengths: {supplier_name[:12]}", color=self.THEME["text"], fontsize=9, pad=10)
         fig.tight_layout()
 
         canvas = FigureCanvasTkAgg(fig, master=self.radar_canvas_frame)
@@ -6279,23 +7581,23 @@ Sourcing Action Guidance:
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
         fig, ax = plt.subplots(figsize=(5.5, 2.0), dpi=100)
-        fig.patch.set_facecolor('#2b2b2b')
-        ax.set_facecolor('#2b2b2b')
+        fig.patch.set_facecolor(self.THEME["surface"])
+        ax.set_facecolor(self.THEME["surface"])
 
         fill_width = 10.0 * (min(fill_percent, 100.0) / 100.0)
         bar_color = "#1f538d" if fill_percent <= 100 else "#bf3b3b"
 
         if fill_width > 0:
-            ax.barh(1, fill_width, height=1.0, color=bar_color, edgecolor='white', label='Filled')
+            ax.barh(1, fill_width, height=1.0, color=bar_color, edgecolor=self.THEME["surface"], label='Filled')
         if fill_width < 10.0:
-            ax.barh(1, 10.0 - fill_width, left=fill_width, height=1.0, color='#4c4c4c', edgecolor='white', label='Empty')
+            ax.barh(1, 10.0 - fill_width, left=fill_width, height=1.0, color=self.THEME["surface_alt"], edgecolor=self.THEME["surface"], label='Empty')
 
         ax.set_xlim(0, 10)
         ax.set_ylim(0, 2)
         ax.axis('off')
 
-        ax.text(5, 1, f"{fill_percent:.1f}% Filled", color='white', ha='center', va='center', weight='bold', fontsize=11)
-        ax.set_title(f"{container_name} Container Space Utilization Map", color='white', fontsize=9, pad=5)
+        ax.text(5, 1, f"{fill_percent:.1f}% Filled", color=self.THEME["text"], ha='center', va='center', weight='bold', fontsize=11)
+        ax.set_title(f"{container_name} Container Space Utilization Map", color=self.THEME["text"], fontsize=9, pad=5)
 
         fig.tight_layout()
 
@@ -6320,7 +7622,7 @@ Sourcing Action Guidance:
 
         ctk.CTkLabel(left_frame, text="📷 Upload Target Product Image", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=10, padx=15, anchor="w")
 
-        self.search_img_preview = ctk.CTkLabel(left_frame, text="No Image Selected", width=220, height=220, fg_color="#2b2b2b", corner_radius=8)
+        self.search_img_preview = ctk.CTkLabel(left_frame, text="No Image Selected", width=220, height=220, fg_color=self.THEME["surface_soft"], text_color=self.THEME["muted"], corner_radius=8)
         self.search_img_preview.pack(pady=15)
 
         btn_upload = ctk.CTkButton(left_frame, text="📁 Select Product Photo", command=self.select_search_product_photo)
@@ -6338,7 +7640,7 @@ Sourcing Action Guidance:
 
         ctk.CTkLabel(right_frame, text="🎯 Matching Supplier Quotes", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
 
-        self.search_results_scroll = ctk.CTkScrollableFrame(right_frame, fg_color="#2b2b2b")
+        self.search_results_scroll = ctk.CTkScrollableFrame(right_frame, fg_color=self.THEME["surface_soft"])
         self.search_results_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
         self.search_results_scroll.grid_columnconfigure(0, weight=1)
 
@@ -6699,7 +8001,7 @@ Sourcing Action Guidance:
         self.hedge_rec_lbl.pack(padx=15, pady=15, fill="both", expand=True)
 
         # --- RIGHT PANEL: Visual Chart Canvas ---
-        self.hedge_display_frame = ctk.CTkFrame(tab_hedge, fg_color="#2b2b2b")
+        self.hedge_display_frame = ctk.CTkFrame(tab_hedge, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         self.hedge_display_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
         self.hedge_display_frame.grid_columnconfigure(0, weight=1)
         self.hedge_display_frame.grid_rowconfigure(0, weight=1)
@@ -6772,8 +8074,8 @@ Sourcing Action Guidance:
             simulated_ddps.append(sim_ddp)
 
         # Plot comparison bar chart
-        fig, ax = plt.subplots(figsize=(6, 4), facecolor='#2b2b2b')
-        ax.set_facecolor('#2b2b2b')
+        fig, ax = plt.subplots(figsize=(6, 4), facecolor=self.THEME["surface"])
+        ax.set_facecolor(self.THEME["surface"])
 
         import numpy as np
         x = np.arange(len(suppliers))
@@ -6782,13 +8084,13 @@ Sourcing Action Guidance:
         ax.bar(x - width/2, baseline_ddps, width, label='Baseline DDP Landed Cost', color='#1f538d')
         ax.bar(x + width/2, simulated_ddps, width, label='Simulated Fluctuation', color='#a83232' if max(simulated_ddps) > max(baseline_ddps) else '#2da832')
 
-        ax.set_ylabel('Cost per Piece (USD)', color='white')
-        ax.set_title('Landed Cost Sensitivity to Currency Fluctuation', color='white', pad=15)
+        ax.set_ylabel('Cost per Piece (USD)', color=self.THEME["muted"])
+        ax.set_title('Landed Cost Sensitivity to Currency Fluctuation', color=self.THEME["text"], pad=15)
         ax.set_xticks(x)
-        ax.set_xticklabels(suppliers, color='white', rotation=15, fontsize=8)
-        ax.tick_params(colors='white')
-        ax.legend(facecolor='#2b2b2b', edgecolor='none', labelcolor='white')
-        ax.grid(color='#4c4c4c', linestyle='--')
+        ax.set_xticklabels(suppliers, color=self.THEME["muted"], rotation=15, fontsize=8)
+        ax.tick_params(colors=self.THEME["muted"])
+        ax.legend(facecolor=self.THEME["surface"], edgecolor='none', labelcolor=self.THEME["text"])
+        ax.grid(color=self.THEME["border"], linestyle='--')
 
         fig.tight_layout()
 
@@ -6884,6 +8186,8 @@ Sourcing Action Guidance:
     def load_po_suppliers(self):
         suppliers = set()
         for r in self.extracted_data:
+            if r.get("review_status") != "Approved":
+                continue
             s = r.get("supplier")
             if s and s != "Unknown":
                 suppliers.add(s)
@@ -6893,10 +8197,20 @@ Sourcing Action Guidance:
             if sorted_sups:
                 self.po_supplier_cb.set(sorted_sups[0])
                 self.on_po_supplier_selected(sorted_sups[0])
+            else:
+                self.po_supplier_cb.set("No approved quotes")
+                self.po_product_cb.configure(values=["Approve quotes first"])
+                self.po_product_cb.set("Approve quotes first")
+                self.po_active_quote = None
+                self.po_active_price = 0.0
+                self.po_cost_lbl.configure(text="$0.00000")
+                self.update_po_preview()
 
     def on_po_supplier_selected(self, choice):
         products = set()
         for r in self.extracted_data:
+            if r.get("review_status") != "Approved":
+                continue
             if r.get("supplier") == choice:
                 p = (r.get("product") or "").strip().title()
                 if p:
@@ -6913,6 +8227,8 @@ Sourcing Action Guidance:
         self.po_active_price = 0.0
         self.po_active_quote = None
         for r in self.extracted_data:
+            if r.get("review_status") != "Approved":
+                continue
             if r.get("supplier") == supplier and (r.get("product") or "").strip().title() == choice:
                 self.po_active_quote = r
                 try:
@@ -6970,6 +8286,9 @@ Authorized Signature: ___________________________
         po_num = self.po_number_entry.get().strip()
         address = self.po_address_entry.get().strip()
         payment = self.po_payment_entry.get().strip()
+        if not getattr(self, "po_active_quote", None) or self.po_active_quote.get("review_status") != "Approved":
+            messagebox.showwarning("Approved Quote Required", "Please approve a quote before generating a purchase order.")
+            return
         
         try:
             qty = int(self.po_qty_entry.get().strip().replace(",", ""))
@@ -7091,6 +8410,7 @@ Authorized Signature: ___________________________
             story.append(sig_table)
 
             doc.build(story)
+            self.save_po_record("Issued", file_path)
             messagebox.showinfo("Success", f"Purchase Order PDF saved successfully at:\n{file_path}!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate PO PDF: {e}")
@@ -7115,11 +8435,13 @@ Authorized Signature: ___________________________
             self.sidebar_frame.grid_forget()
             self.grid_columnconfigure(0, minsize=0, weight=0)
             self.btn_toggle_nav.configure(fg_color="#3c3c3c", text="☰ Show Navigation")
+            self.btn_toggle_nav.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Show Navigation")
             self.sidebar_visible = False
         else:
-            self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+            self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
             self.grid_columnconfigure(0, minsize=240, weight=0)
             self.btn_toggle_nav.configure(fg_color="#1f538d", text="☰ Hide Navigation")
+            self.btn_toggle_nav.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Navigation")
             self.sidebar_visible = True
 
     def toggle_sourcing_files(self):
@@ -7129,11 +8451,13 @@ Authorized Signature: ___________________________
             self.sourcing_files_subframe.grid_forget()
             self.tab_comp_ref.grid_columnconfigure(0, minsize=0, weight=0)
             self.btn_toggle_files.configure(fg_color="#3c3c3c", text="📁 Show Source Files")
+            self.btn_toggle_files.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Show Source Files")
             self.sourcing_files_visible = False
         else:
             self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(5, 10), pady=10)
             self.tab_comp_ref.grid_columnconfigure(0, minsize=260, weight=0)
             self.btn_toggle_files.configure(fg_color="#1f538d", text="📁 Hide Source Files")
+            self.btn_toggle_files.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Source Files")
             self.sourcing_files_visible = True
 
     def toggle_document_preview(self):
@@ -7141,12 +8465,89 @@ Authorized Signature: ___________________________
             self.preview_frame.grid_forget()
             self.grid_columnconfigure(2, minsize=0, weight=0)
             self.btn_toggle_preview.configure(fg_color="#3c3c3c", text="📄 Show Preview")
+            self.btn_toggle_preview.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Show Preview")
             self.document_preview_visible = False
         else:
-            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=10, pady=10)
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 14), pady=14)
             self.grid_columnconfigure(2, minsize=360, weight=0)
             self.btn_toggle_preview.configure(fg_color="#1f538d", text="📄 Hide Preview")
+            self.btn_toggle_preview.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Preview")
             self.document_preview_visible = True
+
+    def setup_po_register_tab(self):
+        tab = self.logistics_tabview.tab("PO Register")
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(tab, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="Purchase Order Register", font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text="Saved purchase orders with supplier, approved quote, value, status, and generated PDF path.", font=ctk.CTkFont(size=12), text_color=self.THEME["muted"]).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.make_button(header, "Refresh", command=self.load_po_register, variant="secondary", width=90).grid(row=0, column=1, rowspan=2, padx=5)
+        self.make_button(header, "Accepted", command=lambda: self.update_selected_po_status("Supplier Accepted"), variant="primary", width=95).grid(row=0, column=2, rowspan=2, padx=5)
+        self.make_button(header, "Shipped", command=lambda: self.update_selected_po_status("Shipped"), variant="warning", width=80).grid(row=0, column=3, rowspan=2, padx=5)
+        self.make_button(header, "Close", command=lambda: self.update_selected_po_status("Closed"), variant="success", width=80).grid(row=0, column=4, rowspan=2, padx=5)
+        self.make_button(header, "Cancel", command=lambda: self.update_selected_po_status("Cancelled"), variant="danger", width=80).grid(row=0, column=5, rowspan=2, padx=5)
+
+        frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+
+        cols = ("id", "po", "supplier", "product", "qty", "unit", "total", "status", "pdf")
+        self.po_register_tree = ttk.Treeview(frame, columns=cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 50),
+            ("po", "PO No.", 140),
+            ("supplier", "Supplier", 150),
+            ("product", "Product", 130),
+            ("qty", "Qty", 80),
+            ("unit", "Unit", 75),
+            ("total", "Total", 90),
+            ("status", "Status", 120),
+            ("pdf", "PDF Path", 240),
+        ]:
+            self.po_register_tree.heading(col, text=label)
+            self.po_register_tree.column(col, width=width, anchor="w")
+        self.po_register_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.load_po_register()
+
+    def load_po_register(self):
+        if not hasattr(self, "po_register_tree"):
+            return
+        self.po_register_tree.delete(*self.po_register_tree.get_children())
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, po_number, supplier_name, product_name, quantity, unit_cost, total_value, status, COALESCE(pdf_path, '')
+            FROM po_register
+            ORDER BY updated_at DESC, id DESC
+        """)
+        for row in c.fetchall():
+            row = list(row)
+            row[5] = f"${float(row[5]):.5f}" if row[5] is not None else "N/A"
+            row[6] = f"${float(row[6]):,.2f}" if row[6] is not None else "N/A"
+            self.po_register_tree.insert("", tk.END, values=row)
+        conn.close()
+
+    def update_selected_po_status(self, status):
+        sel = self.po_register_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select PO", "Please select a PO record first.")
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        for item in sel:
+            po_id = int(self.po_register_tree.item(item, "values")[0])
+            c.execute("UPDATE po_register SET status=?, updated_at=datetime('now') WHERE id=?", (status, po_id))
+            c.execute("""
+                INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+                VALUES ('PO', ?, 'Status Changed', ?, ?)
+            """, (po_id, status, f"PO marked {status}."))
+        conn.commit()
+        conn.close()
+        self.load_po_register()
 
     def setup_price_history_tab(self):
         tab_history = self.sourcing_tabview.tab("📈 Price History")
@@ -7187,7 +8588,7 @@ Authorized Signature: ___________________________
         btn_add_pt.pack(padx=15, pady=20, fill="x")
 
         # --- RIGHT PANEL: Visual Line Chart Canvas ---
-        self.hist_chart_frame = ctk.CTkFrame(tab_history, fg_color="#2b2b2b")
+        self.hist_chart_frame = ctk.CTkFrame(tab_history, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         self.hist_chart_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
         self.hist_chart_frame.grid_columnconfigure(0, weight=1)
         self.hist_chart_frame.grid_rowconfigure(0, weight=1)
@@ -7311,8 +8712,8 @@ Authorized Signature: ___________________________
                 ctk.CTkLabel(self.hist_chart_frame, text="No price points available to plot trend.", text_color="grey").pack(pady=50)
                 return
 
-        fig, ax = plt.subplots(figsize=(6, 4), facecolor='#2b2b2b')
-        ax.set_facecolor('#2b2b2b')
+        fig, ax = plt.subplots(figsize=(6, 4), facecolor=self.THEME["surface"])
+        ax.set_facecolor(self.THEME["surface"])
 
         ax.plot(dates, prices, marker='o', linestyle='-', color='#1f538d', linewidth=2.5, markersize=8, label="Unit Cost (USD)")
         
@@ -7320,12 +8721,12 @@ Authorized Signature: ___________________________
         trend_color = "#2da832" if pct_change <= 0 else "#a83232"
         ax.plot([dates[0], dates[-1]], [prices[0], prices[-1]], linestyle='--', color=trend_color, alpha=0.5)
 
-        ax.set_ylabel('Unit Cost (USD)', color='white')
-        ax.set_title(f'Quote Price Trend: {supplier} ({product})', color='white', pad=15)
-        ax.tick_params(colors='white')
-        ax.grid(color='#4c4c4c', linestyle='--')
+        ax.set_ylabel('Unit Cost (USD)', color=self.THEME["muted"])
+        ax.set_title(f'Quote Price Trend: {supplier} ({product})', color=self.THEME["text"], pad=15)
+        ax.tick_params(colors=self.THEME["muted"])
+        ax.grid(color=self.THEME["border"], linestyle='--')
         
-        plt.xticks(rotation=15, color='white')
+        plt.xticks(rotation=15, color=self.THEME["muted"])
         fig.tight_layout()
 
         canvas = FigureCanvasTkAgg(fig, master=self.hist_chart_frame)
