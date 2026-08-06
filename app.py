@@ -364,6 +364,14 @@ class App(ctk.CTk):
         "table_header": "#E5EAF1",
         "table_selected": "#D7E7F7",
         "shadow": "#E8EDF3",
+        "success_soft": "#ECFDF3",
+        "success_border": "#BBF7D0",
+        "warning_soft": "#FFF7ED",
+        "warning_border": "#FED7AA",
+        "danger_soft": "#FEF2F2",
+        "danger_border": "#FECACA",
+        "info_soft": "#EFF6FF",
+        "info_border": "#BFDBFE",
     }
 
     def apply_app_theme(self):
@@ -391,6 +399,44 @@ class App(ctk.CTk):
         }
         defaults.update(kwargs)
         return ctk.CTkButton(parent, text=text, command=command, **defaults)
+
+    def style_card(self, widget, variant="surface"):
+        variants = {
+            "surface": (self.THEME["surface"], self.THEME["border"]),
+            "soft": (self.THEME["surface_soft"], self.THEME["border"]),
+            "info": (self.THEME["info_soft"], self.THEME["info_border"]),
+            "success": (self.THEME["success_soft"], self.THEME["success_border"]),
+            "warning": (self.THEME["warning_soft"], self.THEME["warning_border"]),
+            "danger": (self.THEME["danger_soft"], self.THEME["danger_border"]),
+        }
+        fg, border = variants.get(variant, variants["surface"])
+        try:
+            widget.configure(fg_color=fg, border_color=border, border_width=1, corner_radius=8)
+        except Exception:
+            pass
+        return widget
+
+    def style_text_output(self, widget):
+        try:
+            widget.configure(
+                fg_color=self.THEME["input_bg"],
+                text_color=self.THEME["text"],
+                border_color=self.THEME["border"],
+                border_width=1,
+                corner_radius=8,
+                font=("Segoe UI", 11),
+            )
+        except Exception:
+            pass
+        return widget
+
+    def make_empty_state(self, parent, title, detail=""):
+        box = ctk.CTkFrame(parent, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        box.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(box, text=title, font=ctk.CTkFont(size=13, weight="bold"), text_color=self.THEME["text"]).pack(anchor="w", padx=14, pady=(12, 2))
+        if detail:
+            ctk.CTkLabel(box, text=detail, font=ctk.CTkFont(size=11), text_color=self.THEME["muted"], wraplength=520, justify="left").pack(anchor="w", padx=14, pady=(0, 12))
+        return box
 
     def make_tabview(self, parent):
         return ctk.CTkTabview(
@@ -451,13 +497,27 @@ class App(ctk.CTk):
         default_grey_surfaces = {
             "gray86",
             "grey86",
+            "gray92",
+            "grey92",
+            "gray90",
+            "grey90",
+            "gray89",
+            "grey89",
+            "gray88",
+            "grey88",
             "gray85",
             "grey85",
+            "gray82",
+            "grey82",
+            "gray80",
+            "grey80",
             "#dbdbdb",
             "#d9d9d9",
             "#d3d3d3",
             "#e5e5e5",
             "#ebebeb",
+            "#f0f0f0",
+            "#f2f2f2",
         }
         danger_surfaces = {"#3c2424", "#4d1e1e"}
 
@@ -488,24 +548,19 @@ class App(ctk.CTk):
                         corner_radius=8,
                     )
                 elif fg in default_grey_surfaces and isinstance(widget, (ctk.CTkFrame, ctk.CTkScrollableFrame)):
-                    safe_configure(
-                        widget,
-                        fg_color=self.THEME["surface"],
-                        border_color=self.THEME["border"],
-                        border_width=1,
-                        corner_radius=8,
-                    )
+                    fill = self.THEME["surface_soft"] if isinstance(widget, ctk.CTkScrollableFrame) else self.THEME["surface"]
+                    safe_configure(widget, fg_color=fill, border_color=self.THEME["border"], border_width=1, corner_radius=8)
                 elif fg in danger_surfaces:
-                    safe_configure(widget, fg_color="#FEF2F2", border_color="#FCA5A5", border_width=1)
+                    safe_configure(widget, fg_color=self.THEME["danger_soft"], border_color=self.THEME["danger_border"], border_width=1)
                 elif fg == "#1f538d" and isinstance(widget, ctk.CTkFrame):
-                    safe_configure(widget, fg_color="#E8F1FB", border_color="#BFDBFE", border_width=1)
+                    safe_configure(widget, fg_color=self.THEME["info_soft"], border_color=self.THEME["info_border"], border_width=1)
             except Exception:
                 pass
 
             try:
                 if isinstance(widget, ctk.CTkLabel):
                     color = normalize_color(widget.cget("text_color"))
-                    if color in {"grey", "gray", "lightgrey", "lightgray", "#cccccc"}:
+                    if color in {"grey", "gray", "lightgrey", "lightgray", "#cccccc", "#808080"}:
                         widget.configure(text_color=self.THEME["muted"])
                     elif color == "white":
                         widget.configure(text_color=self.THEME["text"])
@@ -531,6 +586,21 @@ class App(ctk.CTk):
                         border_color=self.THEME["border_strong"],
                         button_color="#AAB4C0",
                         button_hover_color="#94A3B8",
+                        text_color=self.THEME["text"],
+                    )
+                elif isinstance(widget, ctk.CTkSlider):
+                    safe_configure(
+                        widget,
+                        button_color="#3B82C4",
+                        button_hover_color=self.THEME["primary"],
+                        progress_color="#3B82C4",
+                    )
+                elif isinstance(widget, ctk.CTkCheckBox):
+                    safe_configure(
+                        widget,
+                        fg_color="#3B82C4",
+                        hover_color=self.THEME["primary_hover"],
+                        border_color=self.THEME["border_strong"],
                         text_color=self.THEME["text"],
                     )
             except Exception:
@@ -5813,8 +5883,11 @@ class App(ctk.CTk):
         self.opt_results_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
         self.opt_results_scroll.grid_columnconfigure(0, weight=1)
 
-        # Placeholders
-        ctk.CTkLabel(self.opt_results_scroll, text="Select products and click Run Optimization.", text_color="grey").pack(pady=40)
+        self.make_empty_state(
+            self.opt_results_scroll,
+            "Ready for optimization",
+            "Select products, confirm quantities, then run the optimizer to compare split sourcing versus supplier consolidation.",
+        )
 
     def update_purchase_optimizer_tab(self):
         current_selections = {}
@@ -5835,7 +5908,7 @@ class App(ctk.CTk):
                 unique_prods.add(p)
 
         if not unique_prods:
-            ctk.CTkLabel(self.opt_scroll, text="No products found in DB.", text_color="grey").pack(pady=20)
+            self.make_empty_state(self.opt_scroll, "No products found", "Extract or sync quotes first so the optimizer can build a product list.")
             return
 
         for idx, p in enumerate(sorted(list(unique_prods))):
@@ -5995,7 +6068,7 @@ class App(ctk.CTk):
                     "total_cost": s_total
                 })
 
-        rec_fr = ctk.CTkFrame(self.opt_results_scroll, fg_color="#1f538d", height=70)
+        rec_fr = ctk.CTkFrame(self.opt_results_scroll, fg_color=self.THEME["info_soft"], border_color=self.THEME["info_border"], border_width=1, corner_radius=8, height=70)
         rec_fr.pack(fill="x", pady=(0, 15), padx=5)
         
         best_consolidated = None
@@ -6006,18 +6079,18 @@ class App(ctk.CTk):
         if best_consolidated and best_consolidated["total_cost"] < total_split_cost:
             savings = total_split_cost - best_consolidated["total_cost"]
             rec_text = f"💡 RECOMMENDATION: Consolidate with {best_consolidated['supplier']}!\nConsolidating saves you ${savings:,.2f} in split freight & handling fees."
-            rec_color = "#a6ffa6"
+            rec_color = self.THEME["success"]
         else:
             if best_consolidated:
                 savings = best_consolidated["total_cost"] - total_split_cost
                 rec_text = f"💡 RECOMMENDATION: Split purchases across suppliers!\nSplitting is ${savings:,.2f} cheaper than consolidating with {best_consolidated['supplier']}."
             else:
                 rec_text = f"💡 RECOMMENDATION: Split purchases across suppliers!\nNo single supplier can fulfill all selected products."
-            rec_color = "#ffefa6"
+            rec_color = self.THEME["warning"]
             
         ctk.CTkLabel(rec_fr, text=rec_text, font=ctk.CTkFont(size=13, weight="bold"), text_color=rec_color, justify="left").pack(padx=15, pady=12, fill="both")
 
-        split_fr = ctk.CTkFrame(self.opt_results_scroll)
+        split_fr = ctk.CTkFrame(self.opt_results_scroll, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         split_fr.pack(fill="x", pady=5, padx=5)
         
         ctk.CTkLabel(split_fr, text="📊 Strategy A: Split Sourcing (Cheapest FOB per Item)", font=ctk.CTkFont(weight="bold", size=14)).pack(pady=8, padx=15, anchor="w")
@@ -6027,11 +6100,11 @@ class App(ctk.CTk):
             ctk.CTkLabel(split_fr, text=row_lbl, font=ctk.CTkFont(size=11), text_color="grey").pack(pady=1, padx=25, anchor="w")
             
         summary_split = f"Items Cost: ${total_split_fob:,.2f} | Freight: ${split_freight:,.2f} | Duties: ${split_duty:,.2f} | Handling: ${split_local:,.2f}"
-        ctk.CTkLabel(split_fr, text=summary_split, font=ctk.CTkFont(size=11, weight="bold"), text_color="white").pack(pady=(5, 2), padx=15, anchor="w")
-        ctk.CTkLabel(split_fr, text=f"TOTAL DDP SPLIT COST: ${total_split_cost:,.2f}", font=ctk.CTkFont(size=13, weight="bold"), text_color="#ffefa6").pack(pady=(2, 8), padx=15, anchor="w")
+        ctk.CTkLabel(split_fr, text=summary_split, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["text"]).pack(pady=(5, 2), padx=15, anchor="w")
+        ctk.CTkLabel(split_fr, text=f"TOTAL DDP SPLIT COST: ${total_split_cost:,.2f}", font=ctk.CTkFont(size=13, weight="bold"), text_color=self.THEME["primary"]).pack(pady=(2, 8), padx=15, anchor="w")
 
         if consolidation_results:
-            con_fr = ctk.CTkFrame(self.opt_results_scroll)
+            con_fr = ctk.CTkFrame(self.opt_results_scroll, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
             con_fr.pack(fill="x", pady=10, padx=5)
             
             ctk.CTkLabel(con_fr, text="🏢 Strategy B: Consolidated Sourcing Options", font=ctk.CTkFont(weight="bold", size=14)).pack(pady=8, padx=15, anchor="w")
@@ -6052,9 +6125,10 @@ class App(ctk.CTk):
                     
                 summary_con = f"  Items: ${s_res['fob_total']:,.2f} | Freight: ${s_res['freight']:,.2f} | Duties: ${s_res['duty']:,.2f} | Handling: ${s_res['local']:,.2f}"
                 ctk.CTkLabel(con_fr, text=summary_con, font=ctk.CTkFont(size=11), text_color="grey").pack(pady=1, padx=25, anchor="w")
-                ctk.CTkLabel(con_fr, text=f"  TOTAL CONSOLIDATED COST: ${s_total:,.2f}", font=ctk.CTkFont(size=12, weight="bold"), text_color="#a6ffa6").pack(pady=(2, 6), padx=25, anchor="w")
+                total_color = self.THEME["success"] if best_consolidated and s_name == best_consolidated["supplier"] else self.THEME["primary"]
+                ctk.CTkLabel(con_fr, text=f"  TOTAL CONSOLIDATED COST: ${s_total:,.2f}", font=ctk.CTkFont(size=12, weight="bold"), text_color=total_color).pack(pady=(2, 6), padx=25, anchor="w")
         else:
-            ctk.CTkLabel(self.opt_results_scroll, text="⚠️ No single supplier in database quotes all selected products.", text_color="grey").pack(pady=10)
+            self.make_empty_state(self.opt_results_scroll, "No full consolidation option", "No single supplier in the database quotes every selected product.")
 
     def setup_rfq_generator_tab(self):
         tab_rfq = self.rfqs_tabview.tab("📝 RFQ Generator")
@@ -6956,7 +7030,7 @@ class App(ctk.CTk):
             w.destroy()
 
         if not self.extracted_data:
-            ctk.CTkLabel(self.matrix_frame, text="No sourcing data loaded in database.", text_color="grey").pack(pady=40)
+            self.make_empty_state(self.matrix_frame, "No sourcing data loaded", "Extract quote files first to build the side-by-side supplier matrix.")
             return
 
         # Dynamically update category dropdown options
@@ -7644,7 +7718,7 @@ Sourcing Action Guidance:
         self.search_results_scroll.grid(row=1, column=0, padx=15, pady=10, sticky="nsew")
         self.search_results_scroll.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(self.search_results_scroll, text="Upload a product photo and click Run Visual Search.", text_color="grey").pack(pady=40)
+        self.make_empty_state(self.search_results_scroll, "Ready for visual search", "Upload a product photo to match it against extracted supplier quote records.")
 
     def select_search_product_photo(self):
         path = filedialog.askopenfilename(
@@ -7747,7 +7821,7 @@ Sourcing Action Guidance:
 
         def display_matches(matches, part_idx_to_candidate):
             if not matches:
-                ctk.CTkLabel(self.search_results_scroll, text="No similar products found in database.", text_color="grey").pack(pady=20)
+                self.make_empty_state(self.search_results_scroll, "No similar products found", "Try another product image or extract more supplier quote data.")
                 return
 
             for m in matches:
@@ -7763,20 +7837,20 @@ Sourcing Action Guidance:
                 prod = quote.get("product") or "Product"
                 price = quote.get("price") or 0.0
                 
-                card = ctk.CTkFrame(self.search_results_scroll, fg_color="#3c3c3c")
+                card = ctk.CTkFrame(self.search_results_scroll, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
                 card.pack(fill="x", pady=4, padx=5)
 
                 header = ctk.CTkFrame(card, fg_color="transparent")
                 header.pack(fill="x", padx=10, pady=5)
 
-                badge_color = "#1e4620" if score >= 80 else ("#4d3d1e" if score >= 50 else "#4d1e1e")
-                badge_text_color = "#a6ffa6" if score >= 80 else ("#ffefa6" if score >= 50 else "#ffa6a6")
+                badge_color = self.THEME["success_soft"] if score >= 80 else (self.THEME["warning_soft"] if score >= 50 else self.THEME["danger_soft"])
+                badge_text_color = self.THEME["success"] if score >= 80 else (self.THEME["warning"] if score >= 50 else self.THEME["danger"])
                 
                 badge = ctk.CTkLabel(header, text=f" {score}% Match ", fg_color=badge_color, text_color=badge_text_color, font=ctk.CTkFont(weight="bold", size=11))
                 badge.pack(side="left")
 
                 ctk.CTkLabel(header, text=f" {sup} — {prod}", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10)
-                ctk.CTkLabel(header, text=f"${price:.4f}/pc" if price < 0.1 else f"${price:.2f}/pc", text_color="#a6e3e9", font=ctk.CTkFont(weight="bold")).pack(side="right")
+                ctk.CTkLabel(header, text=f"${price:.4f}/pc" if price < 0.1 else f"${price:.2f}/pc", text_color=self.THEME["primary"], font=ctk.CTkFont(weight="bold")).pack(side="right")
 
                 ctk.CTkLabel(card, text=rationale, font=ctk.CTkFont(size=11), text_color="grey", justify="left").pack(padx=15, pady=(0, 10), fill="x")
 
@@ -7995,7 +8069,7 @@ Sourcing Action Guidance:
         self.eur_slider.set(0.0)
 
         # Recommendation Card
-        self.hedge_rec_card = ctk.CTkFrame(left_frame, fg_color="#1f538d")
+        self.hedge_rec_card = ctk.CTkFrame(left_frame, fg_color=self.THEME["info_soft"], border_color=self.THEME["info_border"], border_width=1, corner_radius=8)
         self.hedge_rec_card.pack(pady=20, padx=15, fill="both", expand=True)
         self.hedge_rec_lbl = ctk.CTkLabel(self.hedge_rec_card, text="💵 Currency Risk Analysis\nAdjust exchange rate sliders to simulate landed cost exposures.", wraplength=220, justify="left")
         self.hedge_rec_lbl.pack(padx=15, pady=15, fill="both", expand=True)
@@ -8020,7 +8094,7 @@ Sourcing Action Guidance:
             w.destroy()
 
         if not self.extracted_data:
-            ctk.CTkLabel(self.hedge_display_frame, text="No supplier quotes available in database to simulate.", text_color="grey").pack(pady=50)
+            self.make_empty_state(self.hedge_display_frame, "No quotes available", "Extract supplier quotes first to simulate currency exposure.")
             return
 
         cny_fluc = self.cny_slider.get() if hasattr(self, 'cny_slider') else 0.0
@@ -8036,7 +8110,7 @@ Sourcing Action Guidance:
                 pass
         
         if not valid_quotes:
-            ctk.CTkLabel(self.hedge_display_frame, text="No valid numeric quote prices to simulate.", text_color="grey").pack(pady=50)
+            self.make_empty_state(self.hedge_display_frame, "No numeric prices", "Add or correct unit prices before running the hedging simulator.")
             return
 
         # Sort and take top 4
@@ -8665,7 +8739,7 @@ Authorized Signature: ___________________________
         product = self.hist_product_cb.get() if hasattr(self, 'hist_product_cb') else ""
 
         if not supplier or supplier == "Select Supplier" or not product or product == "Select Product":
-            ctk.CTkLabel(self.hist_chart_frame, text="Select supplier and product to view historical price trend.", text_color="grey").pack(pady=50)
+            self.make_empty_state(self.hist_chart_frame, "Select a supplier and product", "Choose both fields to view the historical price trend.")
             return
 
         current_price = None
@@ -8709,7 +8783,7 @@ Authorized Signature: ___________________________
                 dates.insert(0, "2026-05-01")
                 prices.insert(0, prices[0])
             else:
-                ctk.CTkLabel(self.hist_chart_frame, text="No price points available to plot trend.", text_color="grey").pack(pady=50)
+                self.make_empty_state(self.hist_chart_frame, "No price points yet", "Log the first historical price point to begin tracking this supplier trend.")
                 return
 
         fig, ax = plt.subplots(figsize=(6, 4), facecolor=self.THEME["surface"])
