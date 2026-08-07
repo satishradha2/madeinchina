@@ -5,21 +5,40 @@ import sqlite3
 import threading
 import subprocess
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+VENDOR_DIR = os.path.join(SCRIPT_DIR, ".vendor")
+if os.path.isdir(VENDOR_DIR) and VENDOR_DIR not in sys.path:
+    sys.path.insert(0, VENDOR_DIR)
+
+try:
+    import site
+    user_site = site.getusersitepackages()
+    if user_site and user_site not in sys.path:
+        site.addsitedir(user_site)
+except Exception:
+    pass
+
 # --- Auto-dependency installer ---
 def install_dependencies():
     # Added pymupdf and matplotlib for PDF page rendering and plotting
-    required = {"customtkinter", "pandas", "openpyxl", "google-generativeai", "pillow", "pymupdf", "matplotlib"}
-    try:
-        import pkg_resources
-        installed = {pkg.key for pkg in pkg_resources.working_set}
-    except Exception:
+    required = {
+        "customtkinter": "customtkinter",
+        "pandas": "pandas",
+        "openpyxl": "openpyxl",
+        "google-genai": "google.genai",
+        "pillow": "PIL",
+        "pymupdf": "fitz",
+        "matplotlib": "matplotlib",
+    }
+    import importlib.util
+
+    def module_available(module):
         try:
-            import importlib.metadata
-            installed = {dist.metadata['Name'].lower() for dist in importlib.metadata.distributions()}
-        except Exception:
-            installed = set()
-            
-    missing = required - installed
+            return importlib.util.find_spec(module) is not None
+        except ModuleNotFoundError:
+            return False
+
+    missing = {pkg for pkg, module in required.items() if not module_available(module)}
     if missing:
         import tkinter as tk
         from tkinter import messagebox
@@ -53,7 +72,7 @@ def install_dependencies():
                 # Restart the script
                 os.execv(sys.executable, [sys.executable] + sys.argv)
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to install dependencies: {e}\nPlease run: pip install customtkinter pandas openpyxl google-generativeai pillow pymupdf matplotlib")
+                messagebox.showerror("Error", f"Failed to install dependencies: {e}\nPlease run: pip install customtkinter pandas openpyxl google-genai pillow pymupdf matplotlib")
                 sys.exit(1)
         else:
             sys.exit(0)
@@ -74,7 +93,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import webbrowser
 
 # --- Configurations ---
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 DB_FILE = os.path.join(SCRIPT_DIR, "quotes.db")
 
@@ -663,6 +681,57 @@ class App(ctk.CTk):
 
         visit(root)
 
+    def extract_pdf_text_for_ai(self, path):
+        pymupdf_added = False
+        try:
+            import fitz
+        except Exception as e:
+            try:
+                import site
+                package_dir = os.path.join(site.getusersitepackages(), "pymupdf")
+                if os.path.isdir(package_dir) and package_dir not in sys.path:
+                    sys.path.insert(0, package_dir)
+                    pymupdf_added = True
+                import pymupdf as fitz
+            except Exception:
+                if pymupdf_added and sys.path and sys.path[0] == package_dir:
+                    sys.path.pop(0)
+                raise Exception("PDF support is not available. Install PyMuPDF with: pip install pymupdf") from e
+
+        try:
+            doc = fitz.open(path)
+            text_parts = []
+            for page_num, page in enumerate(doc, start=1):
+                text = page.get_text("text").strip()
+                if text:
+                    text_parts.append(f"--- PDF page {page_num} ---\n{text}")
+            doc.close()
+        except Exception as e:
+            raise Exception(f"Could not read PDF text: {e}") from e
+        finally:
+            if pymupdf_added and sys.path and sys.path[0] == package_dir:
+                sys.path.pop(0)
+
+        text_content = "\n\n".join(text_parts).strip()
+        if not text_content:
+            raise Exception("PDF has no extractable text. Please convert it to an image or use Gemini PDF extraction for scanned PDFs.")
+        return text_content
+
+    def get_extraction_error_summary(self, err):
+        message = str(err).strip() or err.__class__.__name__
+        lowered = message.lower()
+        if "pdf support is not available" in lowered or "pymupdf" in lowered or "fitz" in lowered:
+            return "PDF support missing"
+        if "no extractable text" in lowered:
+            return "Scanned PDF"
+        if "custom openai/luna api failed" in lowered:
+            return "AI API failed"
+        if "expecting value" in lowered or "json" in lowered:
+            return "Bad AI JSON"
+        if "quota" in lowered or "429" in lowered or "rate" in lowered:
+            return "Rate limit"
+        return message[:46]
+
     def generate_with_fallback(self, content_list, prompt, json_response=True):
         if hasattr(self, 'api_provider') and self.api_provider == "Custom OpenAI/Luna":
             import urllib.request
@@ -679,13 +748,27 @@ class App(ctk.CTk):
                 for item in content_list:
                     if isinstance(item, dict) and "data" in item:
                         mime = item.get("mime_type", "image/jpeg")
-                        b64_data = base64.b64encode(item["data"]).decode('utf-8')
-                        content_payload.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime};base64,{b64_data}"
-                            }
-                        })
+                        if mime == "application/pdf":
+                            pdf_text = item.get("text") or ""
+                            if not pdf_text:
+                                raise Exception("Custom OpenAI/Luna PDF extraction requires text extracted from the PDF before calling the API.")
+                            content_payload.append({
+                                "type": "text",
+                                "text": f"PDF TEXT CONTENT:\n\n{pdf_text}"
+                            })
+                        elif mime.startswith("image/"):
+                            b64_data = base64.b64encode(item["data"]).decode('utf-8')
+                            content_payload.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime};base64,{b64_data}"
+                                }
+                            })
+                        else:
+                            content_payload.append({
+                                "type": "text",
+                                "text": item["data"].decode("utf-8", errors="ignore")
+                            })
                     else:
                         content_payload.append({
                             "type": "text",
@@ -5150,7 +5233,10 @@ class App(ctk.CTk):
 
                         with open(path, "rb") as f:
                             file_bytes = f.read()
-                        content_list = [{"mime_type": mime_type, "data": file_bytes}]
+                        content_item = {"mime_type": mime_type, "data": file_bytes}
+                        if ext == ".pdf" and getattr(self, "api_provider", "") == "Custom OpenAI/Luna":
+                            content_item["text"] = self.extract_pdf_text_for_ai(path)
+                        content_list = [content_item]
 
                     response_text = self.generate_with_fallback(
                         content_list,
@@ -5181,10 +5267,11 @@ class App(ctk.CTk):
                         time.sleep(15.0)
                         retries -= 1
                     else:
+                        error_summary = self.get_extraction_error_summary(e)
                         for box_idx in range(self.files_box_unsynced.size()):
                             if name in self.files_box_unsynced.get(box_idx):
                                 self.files_box_unsynced.delete(box_idx)
-                                self.files_box_unsynced.insert(box_idx, f"❌ {name} (Error)")
+                                self.files_box_unsynced.insert(box_idx, f"❌ {name} ({error_summary})")
                                 break
                         print(f"Error processing {name}: {e}")
                         break

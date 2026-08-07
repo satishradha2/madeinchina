@@ -1,6 +1,7 @@
 # Python cache
 __pycache__/
 *.pyc
+.vendor/
 
 # Local Config and API keys (CRITICAL to avoid key leaks!)
 config.json
