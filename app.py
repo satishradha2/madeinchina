@@ -311,6 +311,23 @@ def init_db():
             defect_rate REAL
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS supplier_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_master_id INTEGER,
+            supplier_name TEXT,
+            document_type TEXT,
+            document_name TEXT,
+            file_path TEXT,
+            issue_date TEXT,
+            expiry_date TEXT,
+            status TEXT DEFAULT 'Pending Review',
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(supplier_master_id, document_type)
+        )
+    """)
     # Table for operational incidents & defects log
     c.execute("""
         CREATE TABLE IF NOT EXISTS supplier_incidents (
@@ -2379,6 +2396,72 @@ class App(ctk.CTk):
         master_email, contact_info = row
         return self.extract_email_from_text(master_email) or self.extract_email_from_text(contact_info)
 
+    def get_required_supplier_document_types(self):
+        return [
+            "Business License",
+            "Quality Certificate",
+            "Factory Audit",
+            "Bank Details",
+            "Trade References",
+        ]
+
+    def get_supplier_document_readiness(self, supplier_name=None, supplier_id=None):
+        required = self.get_required_supplier_document_types()
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        if supplier_id:
+            c.execute("""
+                SELECT document_type, status, COALESCE(expiry_date, '')
+                FROM supplier_documents
+                WHERE supplier_master_id=?
+            """, (supplier_id,))
+        else:
+            supplier_clean = self.clean_supplier_name(supplier_name)
+            c.execute("""
+                SELECT document_type, status, COALESCE(expiry_date, '')
+                FROM supplier_documents
+                WHERE LOWER(supplier_name)=LOWER(?) OR LOWER(supplier_name)=LOWER(?)
+            """, (supplier_clean, supplier_name or ""))
+        rows = c.fetchall()
+        conn.close()
+
+        import datetime
+        today = datetime.date.today()
+        verified = set()
+        expired = []
+        for doc_type, status, expiry in rows:
+            status = status or "Pending Review"
+            is_accepted = status in {"Verified", "Waived"}
+            is_expired = False
+            if expiry:
+                try:
+                    is_expired = datetime.datetime.strptime(expiry[:10], "%Y-%m-%d").date() < today
+                except Exception:
+                    is_expired = False
+            if is_accepted and not is_expired:
+                verified.add(doc_type)
+            elif is_expired:
+                expired.append(doc_type)
+
+        missing = [doc for doc in required if doc not in verified]
+        rfq_ready = all(doc in verified for doc in ["Business License", "Trade References"])
+        po_ready = all(doc in verified for doc in ["Business License", "Quality Certificate", "Bank Details"])
+        if not missing and not expired:
+            status = "Ready for PO"
+        elif po_ready and not expired:
+            status = "Ready for PO"
+        elif rfq_ready:
+            status = "Ready for RFQ"
+        else:
+            status = "Incomplete"
+        return {
+            "status": status,
+            "missing": missing,
+            "expired": expired,
+            "verified_count": len(verified),
+            "required_count": len(required),
+        }
+
     def seed_master_data_from_quotes(self, show_message=True):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -2562,6 +2645,7 @@ class App(ctk.CTk):
         tab_master.grid_columnconfigure(0, weight=1)
         tab_master.grid_columnconfigure(1, weight=1)
         tab_master.grid_rowconfigure(1, weight=1)
+        tab_master.grid_rowconfigure(2, weight=1)
 
         header = ctk.CTkFrame(tab_master, fg_color="transparent")
         header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(14, 8))
@@ -2605,21 +2689,23 @@ class App(ctk.CTk):
         self.btn_edit_supplier_master = self.make_button(supplier_head, "Edit", command=self.edit_selected_supplier_master, variant="secondary", width=65)
         self.btn_edit_supplier_master.grid(row=0, column=5, sticky="e", padx=(4, 0))
 
-        supplier_cols = ("id", "display", "approval", "status", "score", "verified", "category", "contact")
+        supplier_cols = ("id", "display", "approval", "status", "readiness", "score", "verified", "category", "contact")
         self.supplier_master_tree = ttk.Treeview(supplier_panel, columns=supplier_cols, show="headings", style="Treeview")
         for col, label, width in [
             ("id", "ID", 45),
-            ("display", "Supplier", 135),
+            ("display", "Supplier", 125),
             ("approval", "Approval", 90),
-            ("status", "Sourcing", 80),
+            ("status", "Sourcing", 75),
+            ("readiness", "Docs", 90),
             ("score", "Contact", 70),
             ("verified", "Verified", 70),
-            ("category", "Category", 105),
-            ("contact", "Email / Contact", 130),
+            ("category", "Category", 95),
+            ("contact", "Email / Contact", 115),
         ]:
             self.supplier_master_tree.heading(col, text=label)
             self.supplier_master_tree.column(col, width=width, anchor="w")
         self.supplier_master_tree.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        self.supplier_master_tree.bind("<<TreeviewSelect>>", lambda event: self.load_supplier_documents_for_selection())
 
         product_panel = ctk.CTkFrame(tab_master, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         product_panel.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 14))
@@ -2647,6 +2733,43 @@ class App(ctk.CTk):
             self.product_master_tree.column(col, width=width, anchor="w")
         self.product_master_tree.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
+        docs_panel = ctk.CTkFrame(tab_master, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        docs_panel.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=16, pady=(0, 14))
+        docs_panel.grid_columnconfigure(0, weight=1)
+        docs_panel.grid_rowconfigure(2, weight=1)
+
+        docs_head = ctk.CTkFrame(docs_panel, fg_color="transparent")
+        docs_head.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        docs_head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(docs_head, text="Supplier Document Control", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        self.btn_add_supplier_doc = self.make_button(docs_head, "Add / Update", command=self.open_supplier_document_dialog, variant="primary", width=110)
+        self.btn_add_supplier_doc.grid(row=0, column=1, padx=4)
+        self.btn_verify_supplier_doc = self.make_button(docs_head, "Verify", command=lambda: self.update_selected_supplier_document_status("Verified"), variant="success", width=75)
+        self.btn_verify_supplier_doc.grid(row=0, column=2, padx=4)
+        self.btn_waive_supplier_doc = self.make_button(docs_head, "Waive", command=lambda: self.update_selected_supplier_document_status("Waived"), variant="secondary", width=70)
+        self.btn_waive_supplier_doc.grid(row=0, column=3, padx=4)
+        self.btn_open_supplier_doc = self.make_button(docs_head, "Open File", command=self.open_selected_supplier_document, variant="secondary", width=85)
+        self.btn_open_supplier_doc.grid(row=0, column=4, padx=4)
+        self.btn_delete_supplier_doc = self.make_button(docs_head, "Delete", command=self.delete_selected_supplier_document, variant="danger", width=70)
+        self.btn_delete_supplier_doc.grid(row=0, column=5, padx=4)
+
+        self.supplier_doc_status_lbl = ctk.CTkLabel(docs_panel, text="Select a supplier to view required document readiness.", text_color=self.THEME["muted"], anchor="w")
+        self.supplier_doc_status_lbl.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
+
+        doc_cols = ("id", "type", "status", "expiry", "file", "notes")
+        self.supplier_docs_tree = ttk.Treeview(docs_panel, columns=doc_cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 45),
+            ("type", "Document Type", 170),
+            ("status", "Status", 115),
+            ("expiry", "Expiry", 95),
+            ("file", "File Path", 360),
+            ("notes", "Notes", 220),
+        ]:
+            self.supplier_docs_tree.heading(col, text=label)
+            self.supplier_docs_tree.column(col, width=width, anchor="w")
+        self.supplier_docs_tree.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
+
     def load_master_data_tables(self):
         if not hasattr(self, "supplier_master_tree"):
             return
@@ -2666,8 +2789,10 @@ class App(ctk.CTk):
         """)
         for row in c.fetchall():
             row = list(row)
-            row[4] = f"{int(row[4] or 0)}/100"
-            row[5] = "Yes" if row[5] else "No"
+            readiness = self.get_supplier_document_readiness(row[1], row[0])["status"]
+            row.insert(4, readiness)
+            row[5] = f"{int(row[5] or 0)}/100"
+            row[6] = "Yes" if row[6] else "No"
             self.supplier_master_tree.insert("", tk.END, values=row)
 
         c.execute("""
@@ -2680,6 +2805,247 @@ class App(ctk.CTk):
             row[3] = f"${float(row[3]):.5f}" if row[3] is not None else "N/A"
             self.product_master_tree.insert("", tk.END, values=row)
         conn.close()
+        self.load_supplier_documents_for_selection()
+
+    def get_selected_supplier_master_values(self):
+        if not hasattr(self, "supplier_master_tree"):
+            return None
+        sel = self.supplier_master_tree.selection()
+        if not sel:
+            return None
+        vals = self.supplier_master_tree.item(sel[0], "values")
+        if not vals:
+            return None
+        try:
+            supplier_id = int(vals[0])
+        except Exception:
+            return None
+        return {"id": supplier_id, "name": vals[1]}
+
+    def load_supplier_documents_for_selection(self):
+        if not hasattr(self, "supplier_docs_tree"):
+            return
+        self.supplier_docs_tree.delete(*self.supplier_docs_tree.get_children())
+        selected = self.get_selected_supplier_master_values()
+        if not selected:
+            self.supplier_doc_status_lbl.configure(text="Select a supplier to view required document readiness.")
+            return
+        readiness = self.get_supplier_document_readiness(selected["name"], selected["id"])
+        summary = (
+            f"{selected['name']} | {readiness['status']} | "
+            f"{readiness['verified_count']}/{readiness['required_count']} required accepted"
+        )
+        if readiness["missing"]:
+            summary += " | Missing: " + ", ".join(readiness["missing"])
+        if readiness["expired"]:
+            summary += " | Expired: " + ", ".join(readiness["expired"])
+        self.supplier_doc_status_lbl.configure(text=summary)
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, document_type, status, COALESCE(expiry_date, ''), COALESCE(file_path, ''), COALESCE(notes, '')
+            FROM supplier_documents
+            WHERE supplier_master_id=?
+            ORDER BY document_type
+        """, (selected["id"],))
+        existing = {row[1]: row for row in c.fetchall()}
+        conn.close()
+
+        for doc_type in self.get_required_supplier_document_types():
+            row = existing.get(doc_type)
+            if row:
+                self.supplier_docs_tree.insert("", tk.END, values=row)
+            else:
+                self.supplier_docs_tree.insert("", tk.END, values=("", doc_type, "Missing", "", "", "Required document not uploaded."))
+        for doc_type, row in existing.items():
+            if doc_type not in self.get_required_supplier_document_types():
+                self.supplier_docs_tree.insert("", tk.END, values=row)
+
+    def open_supplier_document_dialog(self):
+        selected = self.get_selected_supplier_master_values()
+        if not selected:
+            messagebox.showwarning("Select Supplier", "Please select a supplier master record first.")
+            return
+
+        doc_win = ctk.CTkToplevel(self)
+        doc_win.title(f"Supplier Document - {selected['name']}")
+        doc_win.geometry("620x430")
+        doc_win.resizable(False, False)
+        doc_win.attributes("-topmost", True)
+        doc_win.grid_columnconfigure(1, weight=1)
+
+        selected_doc_type = ""
+        sel_doc = self.supplier_docs_tree.selection() if hasattr(self, "supplier_docs_tree") else []
+        if sel_doc:
+            selected_doc_type = self.supplier_docs_tree.item(sel_doc[0], "values")[1]
+
+        ctk.CTkLabel(doc_win, text="Document Type:").grid(row=0, column=0, padx=15, pady=8, sticky="w")
+        type_cb = ctk.CTkComboBox(doc_win, values=self.get_required_supplier_document_types() + ["Other"], width=300)
+        type_cb.grid(row=0, column=1, padx=15, pady=8, sticky="ew")
+        type_cb.set(selected_doc_type or "Business License")
+
+        ctk.CTkLabel(doc_win, text="Document Name:").grid(row=1, column=0, padx=15, pady=8, sticky="w")
+        name_entry = ctk.CTkEntry(doc_win)
+        name_entry.grid(row=1, column=1, padx=15, pady=8, sticky="ew")
+
+        ctk.CTkLabel(doc_win, text="File Path:").grid(row=2, column=0, padx=15, pady=8, sticky="w")
+        file_entry = ctk.CTkEntry(doc_win)
+        file_entry.grid(row=2, column=1, padx=15, pady=8, sticky="ew")
+
+        def browse_file():
+            path = filedialog.askopenfilename(
+                title="Select Supplier Compliance Document",
+                filetypes=[("Documents", "*.pdf *.png *.jpg *.jpeg *.xlsx *.xls *.docx"), ("All files", "*.*")]
+            )
+            if path:
+                file_entry.delete(0, tk.END)
+                file_entry.insert(0, path)
+                if not name_entry.get().strip():
+                    name_entry.insert(0, os.path.basename(path))
+
+        self.make_button(doc_win, "Browse", command=browse_file, variant="secondary", width=85).grid(row=2, column=2, padx=(0, 15), pady=8)
+
+        ctk.CTkLabel(doc_win, text="Issue Date:").grid(row=3, column=0, padx=15, pady=8, sticky="w")
+        issue_entry = ctk.CTkEntry(doc_win, placeholder_text="YYYY-MM-DD")
+        issue_entry.grid(row=3, column=1, padx=15, pady=8, sticky="ew")
+
+        ctk.CTkLabel(doc_win, text="Expiry Date:").grid(row=4, column=0, padx=15, pady=8, sticky="w")
+        expiry_entry = ctk.CTkEntry(doc_win, placeholder_text="YYYY-MM-DD or blank")
+        expiry_entry.grid(row=4, column=1, padx=15, pady=8, sticky="ew")
+
+        ctk.CTkLabel(doc_win, text="Status:").grid(row=5, column=0, padx=15, pady=8, sticky="w")
+        status_cb = ctk.CTkComboBox(doc_win, values=["Pending Review", "Verified", "Rejected", "Waived"], width=300)
+        status_cb.grid(row=5, column=1, padx=15, pady=8, sticky="ew")
+        status_cb.set("Pending Review")
+
+        ctk.CTkLabel(doc_win, text="Notes:").grid(row=6, column=0, padx=15, pady=8, sticky="w")
+        notes_entry = ctk.CTkEntry(doc_win)
+        notes_entry.grid(row=6, column=1, padx=15, pady=8, sticky="ew")
+
+        def save_doc():
+            doc_type = type_cb.get().strip()
+            file_path = file_entry.get().strip()
+            expiry = expiry_entry.get().strip()
+            issue = issue_entry.get().strip()
+            if not doc_type:
+                messagebox.showerror("Missing Document Type", "Please select a document type.", parent=doc_win)
+                return
+            if expiry:
+                try:
+                    import datetime
+                    datetime.datetime.strptime(expiry[:10], "%Y-%m-%d")
+                except Exception:
+                    messagebox.showerror("Invalid Expiry Date", "Expiry date must be YYYY-MM-DD.", parent=doc_win)
+                    return
+            if issue:
+                try:
+                    import datetime
+                    datetime.datetime.strptime(issue[:10], "%Y-%m-%d")
+                except Exception:
+                    messagebox.showerror("Invalid Issue Date", "Issue date must be YYYY-MM-DD.", parent=doc_win)
+                    return
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO supplier_documents (
+                    supplier_master_id, supplier_name, document_type, document_name,
+                    file_path, issue_date, expiry_date, status, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(supplier_master_id, document_type) DO UPDATE SET
+                    supplier_name=excluded.supplier_name,
+                    document_name=excluded.document_name,
+                    file_path=excluded.file_path,
+                    issue_date=excluded.issue_date,
+                    expiry_date=excluded.expiry_date,
+                    status=excluded.status,
+                    notes=excluded.notes,
+                    updated_at=datetime('now')
+            """, (
+                selected["id"],
+                selected["name"],
+                doc_type,
+                name_entry.get().strip() or os.path.basename(file_path) or doc_type,
+                file_path,
+                issue,
+                expiry,
+                status_cb.get().strip(),
+                notes_entry.get().strip(),
+            ))
+            c.execute("""
+                INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+                VALUES ('Supplier', ?, 'Document Updated', ?)
+            """, (selected["id"], f"{doc_type} saved with status {status_cb.get().strip()}."))
+            conn.commit()
+            conn.close()
+            doc_win.destroy()
+            self.load_master_data_tables()
+
+        self.make_button(doc_win, "Save Document", command=save_doc, variant="success", width=160).grid(row=7, column=0, columnspan=3, pady=18)
+
+    def update_selected_supplier_document_status(self, status):
+        selected_supplier = self.get_selected_supplier_master_values()
+        if not selected_supplier:
+            messagebox.showwarning("Select Supplier", "Please select a supplier master record first.")
+            return
+        sel = self.supplier_docs_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select Document", "Please select a supplier document row first.")
+            return
+        vals = self.supplier_docs_tree.item(sel[0], "values")
+        if not vals or not vals[0]:
+            messagebox.showwarning("Missing Document", "This required document has not been uploaded yet.")
+            return
+        doc_id = int(vals[0])
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE supplier_documents SET status=?, updated_at=datetime('now') WHERE id=?", (status, doc_id))
+        c.execute("""
+            INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+            VALUES ('Supplier', ?, 'Document Status Changed', ?)
+        """, (selected_supplier["id"], f"{vals[1]} marked {status}."))
+        conn.commit()
+        conn.close()
+        self.load_master_data_tables()
+
+    def open_selected_supplier_document(self):
+        sel = self.supplier_docs_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select Document", "Please select a supplier document first.")
+            return
+        vals = self.supplier_docs_tree.item(sel[0], "values")
+        path = vals[4] if len(vals) > 4 else ""
+        if not path:
+            messagebox.showwarning("No File", "This document row has no saved file path.")
+            return
+        if not os.path.exists(path):
+            messagebox.showerror("File Missing", f"The saved document file does not exist:\n{path}")
+            return
+        os.startfile(path)
+
+    def delete_selected_supplier_document(self):
+        selected_supplier = self.get_selected_supplier_master_values()
+        sel = self.supplier_docs_tree.selection()
+        if not selected_supplier or not sel:
+            messagebox.showwarning("Select Document", "Please select a supplier document row first.")
+            return
+        vals = self.supplier_docs_tree.item(sel[0], "values")
+        if not vals or not vals[0]:
+            messagebox.showwarning("Missing Document", "This required document has not been uploaded yet.")
+            return
+        if not messagebox.askyesno("Delete Document", f"Delete supplier document '{vals[1]}' from the register?"):
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("DELETE FROM supplier_documents WHERE id=?", (int(vals[0]),))
+        c.execute("""
+            INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+            VALUES ('Supplier', ?, 'Document Deleted', ?)
+        """, (selected_supplier["id"], f"{vals[1]} removed from supplier document register."))
+        conn.commit()
+        conn.close()
+        self.load_master_data_tables()
 
     def edit_selected_supplier_master(self):
         sel = self.supplier_master_tree.selection()
@@ -8034,6 +8400,17 @@ class App(ctk.CTk):
                 return
             missing_emails = [s for s in selected_sups if not supplier_emails.get(s)]
             combined_warnings = list(warnings)
+            doc_warnings = []
+            for supplier in selected_sups:
+                readiness = self.get_supplier_document_readiness(supplier)
+                if readiness["status"] == "Incomplete":
+                    detail = []
+                    if readiness["missing"]:
+                        detail.append("missing " + ", ".join(readiness["missing"][:3]))
+                    if readiness["expired"]:
+                        detail.append("expired " + ", ".join(readiness["expired"][:3]))
+                    doc_warnings.append(f"{supplier}: compliance documents incomplete ({'; '.join(detail) or 'review required'}).")
+            combined_warnings.extend(doc_warnings)
             if missing_emails:
                 combined_warnings.append(
                     "Missing supplier email for: " + ", ".join(missing_emails[:8])
