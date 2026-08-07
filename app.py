@@ -1068,6 +1068,7 @@ class App(ctk.CTk):
         self.sourcing_grid_subframe.grid(row=0, column=1, sticky="nsew", padx=(6, 12), pady=12)
         self.sourcing_grid_subframe.grid_columnconfigure(0, weight=1)
         self.sourcing_grid_subframe.grid_rowconfigure(2, weight=1)
+        self.quote_assistant_visible = False
 
         # Folder selection / Direct Path Box
         self.folder_frame = ctk.CTkFrame(self.sourcing_files_subframe, fg_color="transparent")
@@ -1248,38 +1249,56 @@ class App(ctk.CTk):
         # --- Re-grid Sourcing Grid elements inside subframe ---
         self.table_ctrl_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
         self.table_ctrl_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(14, 8))
+        self.table_ctrl_frame.grid_columnconfigure(0, weight=1)
+        self.table_ctrl_frame.grid_columnconfigure(1, weight=0)
 
         self.table_lbl = ctk.CTkLabel(self.table_ctrl_frame, text="Extracted Quotes Comparison", font=ctk.CTkFont(size=18, weight="bold"))
         self.table_lbl.configure(font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"])
-        self.table_lbl.pack(side="left")
+        self.table_lbl.grid(row=0, column=0, sticky="w")
+        self.quote_summary_lbl = ctk.CTkLabel(
+            self.table_ctrl_frame,
+            text="0 quotes | 0 approved | 0 pending | 0 high risk",
+            font=ctk.CTkFont(size=11),
+            text_color=self.THEME["muted"],
+        )
+        self.quote_summary_lbl.grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-        self.btn_add_row = ctk.CTkButton(self.table_ctrl_frame, text="+ Add Row", width=90, command=self.add_empty_row)
-        self.btn_add_row.configure(fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], text_color="white", corner_radius=6, height=34)
+        self.quote_action_bar = ctk.CTkFrame(
+            self.table_ctrl_frame,
+            fg_color=self.THEME["surface"],
+            border_color=self.THEME["border"],
+            border_width=1,
+            corner_radius=8,
+        )
+        self.quote_action_bar.grid(row=0, column=1, rowspan=2, sticky="e")
+
+        self.btn_add_row = ctk.CTkButton(self.quote_action_bar, text="+ Add", width=74, command=self.add_empty_row)
+        self.btn_add_row.configure(fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], text_color="white", corner_radius=6, height=30)
         self.btn_add_row.pack(side="right", padx=5)
 
-        self.btn_delete_row = ctk.CTkButton(self.table_ctrl_frame, text="- Delete Row", width=90, fg_color="#a83232", hover_color="#8c2626", command=self.delete_selected_row)
-        self.btn_delete_row.configure(fg_color=self.THEME["danger"], hover_color=self.THEME["danger_hover"], text_color="white", corner_radius=6, height=34)
+        self.btn_delete_row = ctk.CTkButton(self.quote_action_bar, text="Delete", width=72, fg_color="#a83232", hover_color="#8c2626", command=self.delete_selected_row)
+        self.btn_delete_row.configure(fg_color=self.THEME["danger"], hover_color=self.THEME["danger_hover"], text_color="white", corner_radius=6, height=30)
         self.btn_delete_row.pack(side="right", padx=5)
 
-        self.btn_reject_quote = self.make_button(self.table_ctrl_frame, text="Reject", width=78, command=lambda: self.set_selected_quote_status("Rejected"), variant="danger")
+        self.btn_reject_quote = self.make_button(self.quote_action_bar, text="Reject", width=68, height=30, command=lambda: self.set_selected_quote_status("Rejected"), variant="danger")
         self.btn_reject_quote.pack(side="right", padx=5)
 
-        self.btn_review_quote = self.make_button(self.table_ctrl_frame, text="Review", width=78, command=lambda: self.set_selected_quote_status("Needs Review"), variant="warning")
+        self.btn_review_quote = self.make_button(self.quote_action_bar, text="Review", width=68, height=30, command=lambda: self.set_selected_quote_status("Needs Review"), variant="warning")
         self.btn_review_quote.pack(side="right", padx=5)
 
-        self.btn_approve_quote = self.make_button(self.table_ctrl_frame, text="Approve", width=82, command=lambda: self.set_selected_quote_status("Approved"), variant="success")
+        self.btn_approve_quote = self.make_button(self.quote_action_bar, text="Approve", width=76, height=30, command=lambda: self.set_selected_quote_status("Approved"), variant="success")
         self.btn_approve_quote.pack(side="right", padx=5)
 
-        self.btn_edit_row = ctk.CTkButton(self.table_ctrl_frame, text="✏ Edit Row", width=90, command=self.edit_selected_row)
-        self.btn_edit_row.configure(text="Edit Row", fg_color="#3B82C4", hover_color="#2C6DA6", text_color="white", corner_radius=6, height=34)
+        self.btn_edit_row = ctk.CTkButton(self.quote_action_bar, text="✏ Edit Row", width=58, command=self.edit_selected_row)
+        self.btn_edit_row.configure(text="Edit", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], corner_radius=6, height=30)
         self.btn_edit_row.pack(side="right", padx=5)
 
-        self.btn_attach_media = ctk.CTkButton(self.table_ctrl_frame, text="📎 Attach Media", width=100, command=self.attach_media_to_selected)
-        self.btn_attach_media.configure(text="Attach Media", fg_color="#3B82C4", hover_color="#2C6DA6", text_color="white", corner_radius=6, height=34)
+        self.btn_attach_media = ctk.CTkButton(self.quote_action_bar, text="📎 Attach Media", width=64, command=self.attach_media_to_selected)
+        self.btn_attach_media.configure(text="Media", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], corner_radius=6, height=30)
         self.btn_attach_media.pack(side="right", padx=5)
 
-        self.btn_paste_chat = ctk.CTkButton(self.table_ctrl_frame, text="📋 Paste Chat", width=90, fg_color="#1f538d", command=self.open_paste_chat_window)
-        self.btn_paste_chat.configure(text="Paste Chat", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], corner_radius=6, height=34)
+        self.btn_paste_chat = ctk.CTkButton(self.quote_action_bar, text="📋 Paste Chat", width=88, fg_color="#1f538d", command=self.open_paste_chat_window)
+        self.btn_paste_chat.configure(text="Paste Chat", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], corner_radius=6, height=30)
         self.btn_paste_chat.pack(side="right", padx=5)
 
         # Row 1: Search box
@@ -1303,6 +1322,15 @@ class App(ctk.CTk):
         )
         self.quote_worklist_cb.set(getattr(self, "quote_worklist_filter", "All"))
         self.quote_worklist_cb.pack(side="right", padx=(6, 5), pady=5)
+        self.btn_toggle_quote_assistant = self.make_button(
+            self.search_frame,
+            "Assistant",
+            command=self.toggle_quote_assistant,
+            variant="secondary",
+            width=92,
+            height=36,
+        )
+        self.btn_toggle_quote_assistant.pack(side="right", padx=(6, 0), pady=5)
 
         self.search_entry.pack(side="left", fill="x", expand=True, padx=5, pady=5)
         self.search_entry.bind("<KeyRelease>", lambda event: self.filter_table())
@@ -1319,7 +1347,16 @@ class App(ctk.CTk):
 
         self.chat_title = ctk.CTkLabel(self.chat_panel, text="💬 AI Procurement Assistant", font=ctk.CTkFont(size=13, weight="bold"))
         self.chat_title.configure(text="AI Procurement Assistant", font=ctk.CTkFont(size=14, weight="bold"), text_color=self.THEME["text"])
-        self.chat_title.grid(row=0, column=0, columnspan=2, padx=12, pady=(8, 3), sticky="w")
+        self.chat_title.grid(row=0, column=0, padx=12, pady=(8, 3), sticky="w")
+        self.btn_hide_quote_assistant = self.make_button(
+            self.chat_panel,
+            "Hide",
+            command=self.toggle_quote_assistant,
+            variant="secondary",
+            width=64,
+            height=28,
+        )
+        self.btn_hide_quote_assistant.grid(row=0, column=1, padx=12, pady=(8, 3), sticky="e")
 
         self.chat_log = ctk.CTkTextbox(self.chat_panel, wrap="word", font=("Segoe UI", 9))
         self.chat_log.configure(fg_color=self.THEME["surface_soft"], text_color=self.THEME["text"], border_width=0)
@@ -1337,6 +1374,7 @@ class App(ctk.CTk):
         self.btn_chat_send = ctk.CTkButton(self.chat_input_frame, text="Send", width=60, height=26, command=self.send_chat_message)
         self.btn_chat_send.configure(width=70, height=32, fg_color=self.THEME["primary"], hover_color=self.THEME["primary_hover"], corner_radius=6)
         self.btn_chat_send.grid(row=0, column=1, sticky="e")
+        self.chat_panel.grid_forget()
 
         # Row 5: Export Buttons & Currency dropdown
         self.export_frame = ctk.CTkFrame(self.sourcing_grid_subframe, fg_color="transparent")
@@ -2778,11 +2816,24 @@ class App(ctk.CTk):
         if hasattr(self, "exception_tree"):
             self.load_exception_register()
 
+    def update_quote_summary_header(self):
+        if not hasattr(self, "quote_summary_lbl"):
+            return
+        rows = self.extracted_data or []
+        total = len(rows)
+        approved = len([r for r in rows if r.get("review_status") == "Approved"])
+        pending = len([r for r in rows if (r.get("review_status") or "Needs Review") == "Needs Review"])
+        high_risk = len([r for r in rows if "high" in str(r.get("sourcing_risk") or "").lower()])
+        self.quote_summary_lbl.configure(
+            text=f"{total} quotes | {approved} approved | {pending} pending | {high_risk} high risk"
+        )
+
     # --- Live Search Filter rendering ---
     def filter_table(self):
         query = self.search_entry.get().strip().lower()
         worklist = self.get_quote_worklist_filter()
         self.tree.delete(*self.tree.get_children())
+        self.update_quote_summary_header()
         
         # Get active currency conversion specs
         _currency_code, symbol, factor = self.get_currency_conversion()
@@ -12171,6 +12222,20 @@ Authorized Signature: ___________________________
             self.btn_toggle_files.configure(fg_color="#1f538d", text="📁 Hide Source Files")
             self.btn_toggle_files.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Source Files")
             self.sourcing_files_visible = True
+
+    def toggle_quote_assistant(self):
+        if not hasattr(self, "chat_panel"):
+            return
+        if getattr(self, "quote_assistant_visible", False):
+            self.chat_panel.grid_forget()
+            if hasattr(self, "btn_toggle_quote_assistant"):
+                self.btn_toggle_quote_assistant.configure(text="Assistant")
+            self.quote_assistant_visible = False
+        else:
+            self.chat_panel.grid(row=4, column=0, sticky="ew", padx=12, pady=(8, 5))
+            if hasattr(self, "btn_toggle_quote_assistant"):
+                self.btn_toggle_quote_assistant.configure(text="Hide Assistant")
+            self.quote_assistant_visible = True
 
     def toggle_document_preview(self):
         if self.document_preview_visible:
