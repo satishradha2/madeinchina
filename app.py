@@ -1371,19 +1371,23 @@ class App(ctk.CTk):
 
         self.dashboard_cards_frame = ctk.CTkFrame(page, fg_color="transparent")
         self.dashboard_cards_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 10))
-        for idx in range(8):
+        for idx in range(6):
             self.dashboard_cards_frame.grid_columnconfigure(idx, weight=1, uniform="dash_cards")
 
         self.dashboard_cards = {}
         card_specs = [
             ("review", "Needs Review", "0"),
-            ("approved", "Approved", "0"),
+            ("approved_ready_rfq", "RFQ Ready", "0"),
+            ("suppliers_not_ready", "Supplier Gaps", "0"),
+            ("suppliers_ready_po", "PO Ready Suppliers", "0"),
+            ("open_exceptions", "Open Exceptions", "0"),
+            ("expiring_docs", "Doc Expiry", "0"),
             ("rfq_open", "Open RFQs", "0"),
             ("po_open", "Open POs", "0"),
             ("po_value", "Open PO Value", "$0"),
-            ("quotes", "Quote Rows", "0"),
-            ("suppliers", "Suppliers", "0"),
+            ("approved", "Approved Quotes", "0"),
             ("expired", "Expired Quotes", "0"),
+            ("high_risk", "High Risk", "0"),
         ]
         for idx, (key, title, value) in enumerate(card_specs):
             card = ctk.CTkFrame(
@@ -1393,7 +1397,7 @@ class App(ctk.CTk):
                 border_width=1,
                 corner_radius=8,
             )
-            card.grid(row=0, column=idx, sticky="nsew", padx=6)
+            card.grid(row=idx // 6, column=idx % 6, sticky="nsew", padx=6, pady=4)
             ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["muted"]).pack(anchor="w", padx=14, pady=(12, 2))
             value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"])
             value_lbl.pack(anchor="w", padx=14, pady=(0, 12))
@@ -1450,7 +1454,7 @@ class App(ctk.CTk):
         self.dashboard_timeline_box = ctk.CTkTextbox(right, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
         self.dashboard_timeline_box.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 12))
 
-        ctk.CTkLabel(right, text="Recommended Next Actions", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=2, column=0, sticky="w", padx=16, pady=(4, 8))
+        ctk.CTkLabel(right, text="Today's Action Queue", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=2, column=0, sticky="w", padx=16, pady=(4, 8))
         self.dashboard_actions_box = ctk.CTkTextbox(right, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
         self.dashboard_actions_box.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 16))
 
@@ -1460,7 +1464,7 @@ class App(ctk.CTk):
 
         data = self.extracted_data or []
         workflow = self.get_workflow_dashboard_snapshot()
-        suppliers = {self.clean_supplier_name(r.get("supplier")) for r in data if r.get("supplier") and r.get("supplier") != "Unknown"}
+        governance = self.get_governance_dashboard_snapshot(data)
         decision_data = self.get_decision_quotes(data) if data else []
         numeric_prices = []
         for r in decision_data:
@@ -1489,11 +1493,15 @@ class App(ctk.CTk):
         needs_review = [r for r in data if (r.get("review_status") or "Needs Review") == "Needs Review"]
         approved = [r for r in data if r.get("review_status") == "Approved"]
 
-        self.dashboard_cards["quotes"].configure(text=str(len(data)))
-        self.dashboard_cards["suppliers"].configure(text=str(len(suppliers)))
         self.dashboard_cards["review"].configure(text=str(len(needs_review)), text_color=self.THEME["warning"] if needs_review else self.THEME["text"])
         self.dashboard_cards["approved"].configure(text=str(len(approved)), text_color=self.THEME["success"] if approved else self.THEME["text"])
+        self.dashboard_cards["approved_ready_rfq"].configure(text=str(governance["approved_ready_rfq"]), text_color=self.THEME["success"] if governance["approved_ready_rfq"] else self.THEME["text"])
+        self.dashboard_cards["suppliers_not_ready"].configure(text=str(governance["suppliers_not_ready"]), text_color=self.THEME["warning"] if governance["suppliers_not_ready"] else self.THEME["text"])
+        self.dashboard_cards["suppliers_ready_po"].configure(text=str(governance["suppliers_ready_po"]), text_color=self.THEME["success"] if governance["suppliers_ready_po"] else self.THEME["text"])
+        self.dashboard_cards["open_exceptions"].configure(text=str(governance["open_exceptions"]), text_color=self.THEME["danger"] if governance["open_exceptions"] else self.THEME["text"])
+        self.dashboard_cards["expiring_docs"].configure(text=str(governance["expiring_docs"]), text_color=self.THEME["warning"] if governance["expiring_docs"] else self.THEME["text"])
         self.dashboard_cards["expired"].configure(text=str(expired_count), text_color=self.THEME["danger"] if expired_count else self.THEME["text"])
+        self.dashboard_cards["high_risk"].configure(text=str(len(high_risk)), text_color=self.THEME["danger"] if high_risk else self.THEME["text"])
         self.dashboard_cards["rfq_open"].configure(text=str(workflow["open_rfqs"]), text_color=self.THEME["primary"] if workflow["open_rfqs"] else self.THEME["text"])
         self.dashboard_cards["po_open"].configure(text=str(workflow["open_pos"]), text_color=self.THEME["primary"] if workflow["open_pos"] else self.THEME["text"])
         self.dashboard_cards["po_value"].configure(text=f"${workflow['open_po_value']:,.0f}", text_color=self.THEME["success"] if workflow["open_po_value"] else self.THEME["text"])
@@ -1524,6 +1532,14 @@ class App(ctk.CTk):
             actions.append("Select a supplier quote folder and run extraction to populate the workspace.")
         if needs_review:
             actions.append(f"Verify and approve {len(needs_review)} quote rows before using them for sourcing decisions.")
+        if governance["contact_gaps"]:
+            actions.append(f"Complete contact verification for {governance['contact_gaps']} supplier master record(s).")
+        if governance["suppliers_not_ready"]:
+            actions.append(f"Upload or verify compliance documents for {governance['suppliers_not_ready']} approved supplier(s).")
+        if governance["open_exceptions"]:
+            actions.append(f"Review {governance['open_exceptions']} open exception request(s) in Settings & System.")
+        if governance["expiring_docs"]:
+            actions.append(f"Renew {governance['expiring_docs']} expired or expiring supplier document(s).")
         if expired_count:
             actions.append(f"Request refreshed pricing for {expired_count} expired quote rows.")
         if high_risk:
@@ -1535,7 +1551,8 @@ class App(ctk.CTk):
             actions.append(f"Follow up on {workflow['open_rfqs']} open RFQ record(s) until they are closed or cancelled.")
         if workflow["open_pos"]:
             actions.append(f"Track {workflow['open_pos']} active PO record(s) through supplier acceptance, shipment, and closure.")
-        actions.append("Keep supplier contact records current before broadcasting RFQs.")
+        if not actions:
+            actions.append("No urgent governance actions. Continue monitoring RFQ and PO cycle progress.")
 
         timeline_text = "\n\n".join(workflow["timeline"]) if workflow["timeline"] else "No RFQ, PO, or quote approval events have been logged yet."
         self.dashboard_timeline_box.configure(state="normal")
@@ -1586,6 +1603,74 @@ class App(ctk.CTk):
             snapshot["timeline"] = [text for _, text in events[:12]]
         except Exception as e:
             snapshot["timeline"] = [f"Unable to load workflow timeline: {e}"]
+        return snapshot
+
+    def get_governance_dashboard_snapshot(self, data):
+        snapshot = {
+            "approved_ready_rfq": 0,
+            "suppliers_not_ready": 0,
+            "suppliers_ready_po": 0,
+            "open_exceptions": 0,
+            "expiring_docs": 0,
+            "contact_gaps": 0,
+        }
+        try:
+            import datetime
+            today = datetime.date.today()
+            soon = today + datetime.timedelta(days=30)
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+
+            c.execute("""
+                SELECT id, display_name, COALESCE(approval_status, 'Needs Review'),
+                       COALESCE(status, 'Active'), COALESCE(contact_verified, 0)
+                FROM supplier_master
+            """)
+            supplier_rows = c.fetchall()
+            approved_supplier_names = set()
+            for supplier_id, display_name, approval_status, sourcing_status, contact_verified in supplier_rows:
+                if not contact_verified:
+                    snapshot["contact_gaps"] += 1
+                readiness = self.get_supplier_document_readiness(display_name, supplier_id)
+                if approval_status == "Approved":
+                    approved_supplier_names.add(self.clean_supplier_name(display_name))
+                    if readiness["status"] == "Ready for PO":
+                        snapshot["suppliers_ready_po"] += 1
+                    else:
+                        snapshot["suppliers_not_ready"] += 1
+
+            c.execute("SELECT COUNT(*) FROM exception_register WHERE status='Requested'")
+            snapshot["open_exceptions"] = c.fetchone()[0] or 0
+
+            c.execute("""
+                SELECT expiry_date
+                FROM supplier_documents
+                WHERE COALESCE(expiry_date, '') != ''
+                  AND status IN ('Pending Review', 'Verified')
+            """)
+            expiring_docs = 0
+            for (expiry_date,) in c.fetchall():
+                try:
+                    expiry = datetime.datetime.strptime(str(expiry_date)[:10], "%Y-%m-%d").date()
+                    if expiry <= soon:
+                        expiring_docs += 1
+                except Exception:
+                    pass
+            snapshot["expiring_docs"] = expiring_docs
+            conn.close()
+
+            approved_quotes = [r for r in (data or []) if r.get("review_status") == "Approved"]
+            ready_quotes = 0
+            for quote in approved_quotes:
+                supplier = self.clean_supplier_name(quote.get("supplier"))
+                if supplier not in approved_supplier_names:
+                    continue
+                readiness = self.get_supplier_document_readiness(supplier)
+                if readiness["status"] in {"Ready for RFQ", "Ready for PO"}:
+                    ready_quotes += 1
+            snapshot["approved_ready_rfq"] = ready_quotes
+        except Exception as e:
+            print(f"Failed to load governance dashboard snapshot: {e}")
         return snapshot
 
     def quote_review_priority(self, row):
