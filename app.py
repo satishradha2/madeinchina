@@ -2847,6 +2847,133 @@ class App(ctk.CTk):
             self.update_dashboard_page()
         return po_id
 
+    def log_workflow_blocked_attempt(self, workflow_type, action, note, workflow_id=0):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES (?, ?, ?, 'Blocked', ?)
+        """, (workflow_type, workflow_id or 0, action, note))
+        conn.commit()
+        conn.close()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
+
+    def parse_positive_int(self, value):
+        try:
+            parsed = int(str(value).replace(",", "").strip())
+            return parsed if parsed > 0 else None
+        except Exception:
+            return None
+
+    def parse_positive_float(self, value):
+        try:
+            parsed = float(str(value).replace(",", "").strip())
+            return parsed if parsed > 0 else None
+        except Exception:
+            return None
+
+    def is_quote_expired(self, quote):
+        validity = str((quote or {}).get("validity_date") or "").strip()
+        if not validity or validity in {"N/A", "Unknown"}:
+            return False
+        try:
+            import datetime
+            return datetime.datetime.strptime(validity[:10], "%Y-%m-%d").date() < datetime.date.today()
+        except Exception:
+            return False
+
+    def validate_rfq_ready(self):
+        issues = []
+        warnings = []
+        product_name = self.rfq_name_entry.get().strip() or self.rfq_product_cb.get().strip()
+        specs = self.rfq_specs_text.get("1.0", tk.END).strip()
+
+        if not product_name or product_name == "Custom":
+            issues.append("Product name is required.")
+        if not self.parse_positive_int(self.rfq_qty_entry.get()):
+            issues.append("Target quantity must be a positive whole number.")
+        if not self.rfq_term_cb.get().strip():
+            issues.append("Price terms are required.")
+        if not self.rfq_lead_entry.get().strip():
+            issues.append("Target lead time is required.")
+        if not self.rfq_payment_entry.get().strip():
+            issues.append("Payment terms are required.")
+        if not specs:
+            issues.append("Product specifications are required.")
+        elif len(specs) < 40:
+            warnings.append("Specifications are very short; add material, size, packing, and quality requirements for a stronger RFQ.")
+        return issues, warnings
+
+    def validate_po_ready(self):
+        issues = []
+        warnings = []
+        supplier = self.po_supplier_cb.get().strip()
+        product = self.po_product_cb.get().strip()
+        quote = getattr(self, "po_active_quote", None)
+
+        if not quote or quote.get("review_status") != "Approved":
+            issues.append("An approved quote must be selected before issuing a PO.")
+        elif self.is_quote_expired(quote):
+            issues.append(f"The selected approved quote expired on {quote.get('validity_date')}; refresh or re-approve before issuing.")
+
+        if not supplier or supplier in {"Select Supplier", "No approved quotes"}:
+            issues.append("Supplier is required.")
+        if not product or product in {"Select Product", "Approve quotes first"}:
+            issues.append("Product is required.")
+        if not self.po_number_entry.get().strip():
+            issues.append("PO number is required.")
+        if not self.parse_positive_int(self.po_qty_entry.get()):
+            issues.append("Order quantity must be a positive whole number.")
+        if not self.parse_positive_float(getattr(self, "po_active_price", 0.0)):
+            issues.append("Unit cost must be greater than zero.")
+        if not self.po_payment_entry.get().strip():
+            issues.append("Payment terms are required.")
+        if not self.po_address_entry.get().strip():
+            issues.append("Delivery address is required.")
+
+        if quote:
+            risk = str(quote.get("risk") or quote.get("sourcing_risk") or "").lower()
+            if "high" in risk:
+                warnings.append("Selected quote has a high-risk alert; confirm commercial approval before issuing.")
+            for field, label in [("moq", "MOQ"), ("lead_time", "lead time"), ("packing", "packing")]:
+                value = str(quote.get(field) or "").strip()
+                if not value or value in {"N/A", "Unknown"}:
+                    warnings.append(f"Selected quote is missing {label}; confirm with supplier before shipment commitment.")
+        return issues, warnings
+
+    def format_readiness_text(self, title, issues, warnings):
+        if not issues and not warnings:
+            return f"{title}\nReady for controlled workflow action."
+        lines = [title]
+        if issues:
+            lines.append("\nRequired before proceeding:")
+            lines.extend([f"- {issue}" for issue in issues])
+        if warnings:
+            lines.append("\nCommercial warnings:")
+            lines.extend([f"- {warning}" for warning in warnings])
+        return "\n".join(lines)
+
+    def set_readiness_box(self, box, title, issues, warnings):
+        if not box:
+            return
+        box.configure(state="normal")
+        box.delete("1.0", tk.END)
+        box.insert("1.0", self.format_readiness_text(title, issues, warnings))
+        box.configure(state="disabled")
+
+    def update_rfq_readiness_panel(self):
+        if not hasattr(self, "rfq_readiness_box"):
+            return
+        issues, warnings = self.validate_rfq_ready()
+        self.set_readiness_box(self.rfq_readiness_box, "RFQ Readiness", issues, warnings)
+
+    def update_po_readiness_panel(self):
+        if not hasattr(self, "po_readiness_box"):
+            return
+        issues, warnings = self.validate_po_ready()
+        self.set_readiness_box(self.po_readiness_box, "PO Issuance Gate", issues, warnings)
+
     def start_contact_extraction_thread(self):
         if not self.api_key:
             messagebox.showerror("API Key Missing", "Please enter and save your Gemini API Key first.")
@@ -6354,6 +6481,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(left_frame, text="Or Custom Product Name:").grid(row=2, column=0, padx=15, pady=2, sticky="w")
         self.rfq_name_entry = ctk.CTkEntry(left_frame)
         self.rfq_name_entry.grid(row=2, column=1, padx=15, pady=2, sticky="ew")
+        self.rfq_name_entry.bind("<KeyRelease>", lambda e: self.update_rfq_readiness_panel())
 
         # Industry Template Dropdown
         ctk.CTkLabel(left_frame, text="Industry Template:").grid(row=3, column=0, padx=15, pady=2, sticky="w")
@@ -6366,10 +6494,11 @@ class App(ctk.CTk):
         self.rfq_qty_entry = ctk.CTkEntry(left_frame)
         self.rfq_qty_entry.grid(row=4, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_qty_entry.insert(0, "100000")
+        self.rfq_qty_entry.bind("<KeyRelease>", lambda e: self.update_rfq_readiness_panel())
 
         # Target Price Term
         ctk.CTkLabel(left_frame, text="Price Terms (FOB/EXW):").grid(row=5, column=0, padx=15, pady=2, sticky="w")
-        self.rfq_term_cb = ctk.CTkComboBox(left_frame, values=["FOB Wuhan", "FOB Shanghai", "FOB Ningbo", "EXW", "CIF", "DDP"])
+        self.rfq_term_cb = ctk.CTkComboBox(left_frame, values=["FOB Wuhan", "FOB Shanghai", "FOB Ningbo", "EXW", "CIF", "DDP"], command=lambda choice: self.update_rfq_readiness_panel())
         self.rfq_term_cb.grid(row=5, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_term_cb.set("FOB Shanghai")
 
@@ -6378,12 +6507,14 @@ class App(ctk.CTk):
         self.rfq_lead_entry = ctk.CTkEntry(left_frame)
         self.rfq_lead_entry.grid(row=6, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_lead_entry.insert(0, "30 days")
+        self.rfq_lead_entry.bind("<KeyRelease>", lambda e: self.update_rfq_readiness_panel())
 
         # Payment Term
         ctk.CTkLabel(left_frame, text="Payment Terms:").grid(row=7, column=0, padx=15, pady=2, sticky="w")
         self.rfq_payment_entry = ctk.CTkEntry(left_frame)
         self.rfq_payment_entry.grid(row=7, column=1, padx=15, pady=2, sticky="ew")
         self.rfq_payment_entry.insert(0, "30% Deposit, 70% Balance against B/L")
+        self.rfq_payment_entry.bind("<KeyRelease>", lambda e: self.update_rfq_readiness_panel())
 
         # Specs Label
         ctk.CTkLabel(left_frame, text="Product Specifications:").grid(row=8, column=0, padx=15, pady=5, sticky="w")
@@ -6394,6 +6525,7 @@ class App(ctk.CTk):
         # Text specs field
         self.rfq_specs_text = ctk.CTkTextbox(left_frame, height=130)
         self.rfq_specs_text.grid(row=9, column=0, columnspan=2, padx=15, pady=(2, 15), sticky="nsew")
+        self.rfq_specs_text.bind("<KeyRelease>", lambda e: self.update_rfq_readiness_panel())
 
         # --- RIGHT PANEL: Actions & Preview ---
         right_frame = ctk.CTkFrame(tab_rfq)
@@ -6408,8 +6540,12 @@ class App(ctk.CTk):
         self.rfq_preview_box.insert("1.0", "Fill out the fields on the left and click 'Generate PDF RFQ' to compile your sourcing document.")
         self.rfq_preview_box.configure(state="disabled")
 
+        self.rfq_readiness_box = ctk.CTkTextbox(right_frame, height=110, wrap="word")
+        self.rfq_readiness_box.grid(row=2, column=0, padx=15, pady=(0, 8), sticky="ew")
+        self.style_text_output(self.rfq_readiness_box)
+
         action_fr = ctk.CTkFrame(right_frame, fg_color="transparent")
-        action_fr.grid(row=2, column=0, padx=15, pady=15, sticky="ew")
+        action_fr.grid(row=3, column=0, padx=15, pady=15, sticky="ew")
 
         self.btn_gen_rfq_pdf = ctk.CTkButton(action_fr, text="📝 Generate PDF RFQ", fg_color="#1f538d", hover_color="#153e6b", command=self.generate_rfq_pdf)
         self.btn_gen_rfq_pdf.pack(side="right", padx=5)
@@ -6419,6 +6555,7 @@ class App(ctk.CTk):
 
         self.btn_save_rfq_draft = self.make_button(action_fr, "Save Draft", command=lambda: self.save_rfq_record("Draft"), variant="secondary", width=95)
         self.btn_save_rfq_draft.pack(side="left", padx=5)
+        self.update_rfq_readiness_panel()
 
     def setup_rfq_register_tab(self):
         tab = self.rfqs_tabview.tab("RFQ Register")
@@ -6675,6 +6812,7 @@ class App(ctk.CTk):
         self.rfq_payment_entry.insert(0, payment or "")
         self.rfq_specs_text.delete("1.0", tk.END)
         self.rfq_specs_text.insert("1.0", specs or "")
+        self.update_rfq_readiness_panel()
 
     def load_selected_po_into_generator(self):
         po_id, _ = self.get_selected_register_id_and_path("PO")
@@ -6759,6 +6897,7 @@ class App(ctk.CTk):
                 self.rfq_specs_text.insert("1.0", best_specs)
             else:
                 self.rfq_specs_text.insert("1.0", f"High-quality {choice} matching standard industry specifications.")
+        self.update_rfq_readiness_panel()
 
     def update_rfq_generator_tab(self):
         products = set()
@@ -6774,6 +6913,7 @@ class App(ctk.CTk):
             self.rfq_product_cb.set(current)
         else:
             self.rfq_product_cb.set("Custom")
+        self.update_rfq_readiness_panel()
 
     def refine_rfq_specs_with_ai(self):
         prod_name = self.rfq_name_entry.get().strip()
@@ -6811,10 +6951,30 @@ class App(ctk.CTk):
         def update_textbox(text):
             self.rfq_specs_text.delete("1.0", tk.END)
             self.rfq_specs_text.insert("1.0", text)
+            self.update_rfq_readiness_panel()
             
         threading.Thread(target=run_ai_specs, daemon=True).start()
 
     def generate_rfq_pdf(self):
+        issues, warnings = self.validate_rfq_ready()
+        self.update_rfq_readiness_panel()
+        if issues:
+            note = "; ".join(issues)
+            self.log_workflow_blocked_attempt("RFQ", "Generate PDF Blocked", note)
+            messagebox.showerror(
+                "RFQ Not Ready",
+                "Fix these issues before generating the RFQ:\n\n- " + "\n- ".join(issues)
+            )
+            return
+        if warnings and not messagebox.askyesno(
+            "RFQ Readiness Warnings",
+            "These items should be improved for an enterprise RFQ:\n\n- "
+            + "\n- ".join(warnings)
+            + "\n\nContinue anyway?"
+        ):
+            self.log_workflow_blocked_attempt("RFQ", "Generate PDF Blocked", "; ".join(warnings))
+            return
+
         prod_name = self.rfq_name_entry.get().strip()
         qty = self.rfq_qty_entry.get().strip()
         terms = self.rfq_term_cb.get().strip()
@@ -7584,6 +7744,16 @@ class App(ctk.CTk):
             self.matrix_tree.insert("", tk.END, values=row_vals)
 
     def open_rfq_broadcast_popup(self):
+        issues, warnings = self.validate_rfq_ready()
+        self.update_rfq_readiness_panel()
+        if issues:
+            note = "; ".join(issues)
+            self.log_workflow_blocked_attempt("RFQ", "Broadcast Blocked", note)
+            messagebox.showerror(
+                "RFQ Not Ready",
+                "Fix these issues before broadcasting the RFQ:\n\n- " + "\n- ".join(issues)
+            )
+            return
         suppliers = set()
         for r in self.extracted_data:
             s = self.clean_supplier_name(r.get("supplier"))
@@ -7607,6 +7777,7 @@ class App(ctk.CTk):
         checklist_scroll.pack(fill="both", expand=True, padx=20, pady=10)
 
         checkbox_vars = {}
+        supplier_emails = {}
         for s in sorted_sups:
             var = tk.IntVar(value=1)
             checkbox_vars[s] = var
@@ -7622,13 +7793,30 @@ class App(ctk.CTk):
                 email_match = re.search(r'[\w\.-]+@[\w\.-]+', row[0])
                 if email_match:
                     email_info = f" ({email_match.group(0)})"
+                    supplier_emails[s] = email_match.group(0)
             
             ctk.CTkCheckBox(checklist_scroll, text=f"{s}{email_info}", variable=var).pack(anchor="w", pady=4, padx=10)
 
         def proceed_outreach():
             selected_sups = [s for s, var in checkbox_vars.items() if var.get() == 1]
             if not selected_sups:
+                self.log_workflow_blocked_attempt("RFQ", "Broadcast Blocked", "No suppliers selected for RFQ outreach.")
                 messagebox.showwarning("Warning", "Please select at least one supplier!")
+                return
+            missing_emails = [s for s in selected_sups if not supplier_emails.get(s)]
+            combined_warnings = list(warnings)
+            if missing_emails:
+                combined_warnings.append(
+                    "Missing supplier email for: " + ", ".join(missing_emails[:8])
+                    + ("..." if len(missing_emails) > 8 else "")
+                )
+            if combined_warnings and not messagebox.askyesno(
+                "RFQ Broadcast Warnings",
+                "Review these outreach warnings:\n\n- "
+                + "\n- ".join(combined_warnings)
+                + "\n\nContinue generating drafts?"
+            ):
+                self.log_workflow_blocked_attempt("RFQ", "Broadcast Blocked", "; ".join(combined_warnings))
                 return
             popup.destroy()
             self.generate_personalized_rfq_outreach(selected_sups)
@@ -8652,6 +8840,7 @@ Sourcing Action Guidance:
         self.po_number_entry.grid(row=3, column=1, padx=15, pady=2, sticky="ew")
         import random
         self.po_number_entry.insert(0, f"PO-2026-{random.randint(1000, 9999)}")
+        self.po_number_entry.bind("<KeyRelease>", lambda e: self.update_po_preview())
 
         # Order Qty
         ctk.CTkLabel(left_frame, text="Order Quantity (pcs):").grid(row=4, column=0, padx=15, pady=(5, 2), sticky="w")
@@ -8665,12 +8854,14 @@ Sourcing Action Guidance:
         self.po_payment_entry = ctk.CTkEntry(left_frame)
         self.po_payment_entry.grid(row=5, column=1, padx=15, pady=2, sticky="ew")
         self.po_payment_entry.insert(0, "30% Deposit, 70% before Shipment")
+        self.po_payment_entry.bind("<KeyRelease>", lambda e: self.update_po_preview())
 
         # Shipping Address
         ctk.CTkLabel(left_frame, text="Delivery Address:").grid(row=6, column=0, padx=15, pady=(5, 2), sticky="w")
         self.po_address_entry = ctk.CTkEntry(left_frame)
         self.po_address_entry.grid(row=6, column=1, padx=15, pady=2, sticky="ew")
         self.po_address_entry.insert(0, "ProcureAI Hub warehouse, Dubai Airport Freezone, UAE")
+        self.po_address_entry.bind("<KeyRelease>", lambda e: self.update_po_preview())
 
         # Unit Cost override display
         ctk.CTkLabel(left_frame, text="Unit Cost (USD):").grid(row=7, column=0, padx=15, pady=(5, 2), sticky="w")
@@ -8690,7 +8881,11 @@ Sourcing Action Guidance:
         ctk.CTkLabel(right_frame, text="📄 Live PO Document Draft", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, pady=10, padx=15, sticky="w")
 
         self.po_preview_box = ctk.CTkTextbox(right_frame, wrap="word")
-        self.po_preview_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 15))
+        self.po_preview_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 8))
+
+        self.po_readiness_box = ctk.CTkTextbox(right_frame, height=120, wrap="word")
+        self.po_readiness_box.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 15))
+        self.style_text_output(self.po_readiness_box)
 
         self.load_po_suppliers()
 
@@ -8790,6 +8985,7 @@ Authorized Signature: ___________________________
         self.po_preview_box.delete("1.0", tk.END)
         self.po_preview_box.insert("1.0", preview_text)
         self.po_preview_box.configure(state="disabled")
+        self.update_po_readiness_panel()
 
     def export_po_pdf(self):
         supplier = self.po_supplier_cb.get()
@@ -8797,15 +8993,28 @@ Authorized Signature: ___________________________
         po_num = self.po_number_entry.get().strip()
         address = self.po_address_entry.get().strip()
         payment = self.po_payment_entry.get().strip()
-        if not getattr(self, "po_active_quote", None) or self.po_active_quote.get("review_status") != "Approved":
-            messagebox.showwarning("Approved Quote Required", "Please approve a quote before generating a purchase order.")
+        issues, warnings = self.validate_po_ready()
+        self.update_po_readiness_panel()
+        if issues:
+            note = "; ".join(issues)
+            quote = getattr(self, "po_active_quote", None) or {}
+            self.log_workflow_blocked_attempt("PO", "Issue PO Blocked", note, quote.get("id") or 0)
+            messagebox.showerror(
+                "PO Not Ready",
+                "Fix these issues before issuing the PO:\n\n- " + "\n- ".join(issues)
+            )
             return
-        
-        try:
-            qty = int(self.po_qty_entry.get().strip().replace(",", ""))
-        except Exception:
-            messagebox.showerror("Error", "Please enter a valid numeric quantity!")
+        if warnings and not messagebox.askyesno(
+            "PO Risk Warnings",
+            "Review these commercial warnings before issuing:\n\n- "
+            + "\n- ".join(warnings)
+            + "\n\nContinue issuing this PO?"
+        ):
+            quote = getattr(self, "po_active_quote", None) or {}
+            self.log_workflow_blocked_attempt("PO", "Issue PO Blocked", "; ".join(warnings), quote.get("id") or 0)
             return
+
+        qty = self.parse_positive_int(self.po_qty_entry.get())
             
         unit_price = getattr(self, 'po_active_price', 0.0)
         total_cost = qty * unit_price
@@ -8940,6 +9149,7 @@ Authorized Signature: ___________________________
         if specs:
             self.rfq_specs_text.delete("1.0", tk.END)
             self.rfq_specs_text.insert("1.0", specs.replace("\\n", "\n"))
+        self.update_rfq_readiness_panel()
 
     def toggle_navigation_sidebar(self):
         if self.sidebar_visible:
