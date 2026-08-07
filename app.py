@@ -177,6 +177,22 @@ def init_db():
         c.execute("ALTER TABLE extracted_quotes ADD COLUMN product_master_id INTEGER")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN source_workflow_type TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN source_workflow_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN source_communication_id INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE extracted_quotes ADD COLUMN source_response_file TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     # Table for enterprise audit trail of user-visible procurement changes
     c.execute("""
@@ -2749,7 +2765,7 @@ class App(ctk.CTk):
             self.tree.insert("", "end", values=(
                 row_data["id"],
                 status_display,
-                row_data["filename"],
+                (f"RFQ Response | {row_data['filename']}" if row_data.get("source_workflow_type") == "RFQ" else row_data["filename"]),
                 row_data["supplier"],
                 row_data["product"],
                 row_data["spec"],
@@ -2789,7 +2805,8 @@ class App(ctk.CTk):
         c = conn.cursor()
         c.execute("""
             SELECT id, filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, validity_date, sourcing_risk, attached_media,
-                   review_status, reviewed_by, reviewed_at, review_notes
+                   review_status, reviewed_by, reviewed_at, review_notes,
+                   COALESCE(source_workflow_type, ''), COALESCE(source_workflow_id, 0), COALESCE(source_communication_id, 0), COALESCE(source_response_file, '')
             FROM extracted_quotes
         """)
         rows = c.fetchall()
@@ -2816,7 +2833,11 @@ class App(ctk.CTk):
                 "review_status": row[16] if len(row) > 16 and row[16] else "Needs Review",
                 "reviewed_by": row[17] if len(row) > 17 else "",
                 "reviewed_at": row[18] if len(row) > 18 else "",
-                "review_notes": row[19] if len(row) > 19 else ""
+                "review_notes": row[19] if len(row) > 19 else "",
+                "source_workflow_type": row[20] if len(row) > 20 else "",
+                "source_workflow_id": row[21] if len(row) > 21 else 0,
+                "source_communication_id": row[22] if len(row) > 22 else 0,
+                "source_response_file": row[23] if len(row) > 23 else "",
             }
             self.extracted_data.append(row_data)
 
@@ -5325,7 +5346,81 @@ Approved By: ____________________
         
         threading.Thread(target=self.run_extraction, daemon=True).start()
 
-    def save_extracted_data_to_db(self, filename, data):
+    def build_quote_extraction_prompt(self, context_note=""):
+        return f"""
+        You are an expert procurement assistant. Extract all quotation details from the provided document or image.
+        {context_note}
+
+        Return the results strictly matching this JSON schema:
+        {{
+          "supplier_name": "Name of the supplier",
+          "contact_info": "email, phone number, website if visible",
+          "price_term": "FOB Wuhan, FOB Shanghai, EXW, etc.",
+          "payment_terms": "e.g. 30% deposit, 70% balance",
+          "delivery_lead_time": "e.g. 30 days",
+          "validity_date": "YYYY-MM-DD format if mentioned",
+          "sourcing_risk": "Low/Medium/High risk summary based on terms",
+          "quotes": [
+            {{
+              "product_name": "Product name",
+              "specifications": "size, weight, gsm, material, packing, or quality details",
+              "color": "White, Blue, Black, etc.",
+              "elastic_type": "Single, Double, or None",
+              "unit_price_usd": 0.0059,
+              "price_unit": "piece",
+              "packing_details": "e.g. 100pcs/bag, 1000pcs/carton",
+              "moq": "e.g. 100,000 pcs"
+            }}
+          ]
+        }}
+
+        Make sure:
+        - If a value is missing or not applicable, return null or empty string.
+        - Calculate the single piece unit price in USD even if quoted per bag, carton, or per 1000pcs.
+        - If quoted in CNY/RMB, convert to USD using 1 USD = 7.2 CNY and note conversion in specifications.
+        - Output ONLY raw JSON. No markdown backticks.
+        """
+
+    def build_file_content_for_ai(self, path):
+        ext = os.path.splitext(path)[1].lower()
+        if ext in {".xlsx", ".xls"}:
+            import pandas as pd
+            df = pd.read_excel(path)
+            csv_text = df.to_csv(index=False)
+            return [f"EXCEL SPREADSHEET CONTENT (CSV format):\n\n{csv_text}"]
+
+        if ext == ".txt":
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return [f"TEXT DOCUMENT CONTENT:\n\n{f.read()}"]
+
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(path)
+        if not mime_type:
+            if ext == ".pdf":
+                mime_type = "application/pdf"
+            elif ext == ".png":
+                mime_type = "image/png"
+            elif ext in {".jpg", ".jpeg"}:
+                mime_type = "image/jpeg"
+            else:
+                mime_type = "application/octet-stream"
+
+        with open(path, "rb") as f:
+            file_bytes = f.read()
+        content_item = {"mime_type": mime_type, "data": file_bytes}
+        if ext == ".pdf" and getattr(self, "api_provider", "") == "Custom OpenAI/Luna":
+            content_item["text"] = self.extract_pdf_text_for_ai(path)
+        return [content_item]
+
+    def extract_quote_file_result(self, path, context_note=""):
+        response_text = self.generate_with_fallback(
+            self.build_file_content_for_ai(path),
+            self.build_quote_extraction_prompt(context_note),
+        )
+        return json.loads(response_text)
+
+    def save_extracted_data_to_db(self, filename, data, workflow_context=None):
+        workflow_context = workflow_context or {}
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         
@@ -5350,8 +5445,12 @@ Approved By: ____________________
         quotes = data.get("quotes") or []
         for quote in quotes:
             c.execute("""
-                INSERT INTO extracted_quotes (filename, supplier, product, spec, color, elastic, price, unit, moq, packing, term, lead_time, validity_date, sourcing_risk, review_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO extracted_quotes (
+                    filename, supplier, product, spec, color, elastic, price, unit, moq, packing,
+                    term, lead_time, validity_date, sourcing_risk, review_status, review_notes,
+                    source_workflow_type, source_workflow_id, source_communication_id, source_response_file
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 filename,
                 supplier,
@@ -5367,10 +5466,25 @@ Approved By: ____________________
                 lead_time,
                 validity_date,
                 sourcing_risk,
-                "Needs Review"
+                "Needs Review",
+                workflow_context.get("review_notes") or "",
+                workflow_context.get("workflow_type"),
+                workflow_context.get("workflow_id"),
+                workflow_context.get("communication_id"),
+                workflow_context.get("response_file_path"),
             ))
+            quote_id = c.lastrowid
+            if workflow_context.get("workflow_type"):
+                c.execute("""
+                    INSERT INTO quote_audit_log (quote_id, action, previous_status, new_status, note)
+                    VALUES (?, 'Created From Response', '', 'Needs Review', ?)
+                """, (
+                    quote_id,
+                    f"{workflow_context.get('workflow_type')}-{workflow_context.get('workflow_id')} communication #{workflow_context.get('communication_id')}"
+                ))
         conn.commit()
         conn.close()
+        return len(quotes)
 
     def run_extraction(self):
         prompt = """
@@ -5439,40 +5553,7 @@ Approved By: ____________________
             retries = 3
             while not success and retries > 0:
                 try:
-                    ext = os.path.splitext(path)[1].lower()
-                    if ext in {".xlsx", ".xls"}:
-                        import pandas as pd
-                        df = pd.read_excel(path)
-                        csv_text = df.to_csv(index=False)
-                        content_list = [f"EXCEL SPREADSHEET CONTENT (CSV format):\n\n{csv_text}"]
-                    else:
-                        import mimetypes
-                        mime_type, _ = mimetypes.guess_type(path)
-                        if not mime_type:
-                            if ext == ".pdf":
-                                mime_type = "application/pdf"
-                            elif ext == ".png":
-                                mime_type = "image/png"
-                            elif ext in {".jpg", ".jpeg"}:
-                                mime_type = "image/jpeg"
-                            elif ext == ".txt":
-                                mime_type = "text/plain"
-                            else:
-                                mime_type = "application/octet-stream"
-
-                        with open(path, "rb") as f:
-                            file_bytes = f.read()
-                        content_item = {"mime_type": mime_type, "data": file_bytes}
-                        if ext == ".pdf" and getattr(self, "api_provider", "") == "Custom OpenAI/Luna":
-                            content_item["text"] = self.extract_pdf_text_for_ai(path)
-                        content_list = [content_item]
-
-                    response_text = self.generate_with_fallback(
-                        content_list,
-                        prompt
-                    )
-                    
-                    result = json.loads(response_text)
+                    result = self.extract_quote_file_result(path)
                     self.save_extracted_data_to_db(name, result)
                     
                     self.load_all_quotes_from_db()
@@ -8369,6 +8450,7 @@ Approved By: ____________________
         self.make_button(header, "Follow-up Email", command=self.launch_selected_followup_email, variant="primary", width=125).grid(row=0, column=3, rowspan=2, padx=5)
         self.make_button(header, "Sent Manually", command=lambda: self.update_selected_communication_status("Sent Manually"), variant="success", width=115).grid(row=0, column=4, rowspan=2, padx=5)
         self.make_button(header, "Response Received", command=self.mark_selected_response_received, variant="warning", width=140).grid(row=0, column=5, rowspan=2, padx=5)
+        self.make_button(header, "Extract Response", command=self.start_extract_selected_response_thread, variant="success", width=135).grid(row=0, column=6, rowspan=2, padx=5)
 
         frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
@@ -8422,7 +8504,7 @@ Approved By: ____________________
         where = []
         params = []
         if filter_label in {"All Open", "followups_due", "overdue_rfq"}:
-            where.append("cl.status NOT IN ('Response Received', 'Closed', 'Cancelled')")
+            where.append("cl.status NOT IN ('Response Received', 'Response Processed', 'Closed', 'Cancelled')")
         if filter_label in {"Due Today", "followups_due"}:
             where.append("COALESCE(cl.follow_up_due, '') <= date('now')")
             where.append("COALESCE(cl.follow_up_due, '') <> ''")
@@ -8624,6 +8706,99 @@ Approved By: ____________________
         if not response_path:
             return
         self.update_selected_communication_status("Response Received", response_path=response_path)
+
+    def start_extract_selected_response_thread(self):
+        if not self.api_key:
+            messagebox.showerror("API Key Missing", "Please enter and save your API key before extracting a response.")
+            return
+        comm_id = self.get_selected_communication_id()
+        if not comm_id:
+            messagebox.showwarning("Select Communication", "Please select a follow-up row first.")
+            return
+        row = self.get_communication_record(comm_id)
+        if not row:
+            return
+        attachment = row[7] or ""
+        if not attachment:
+            attachment = filedialog.askopenfilename(
+                title="Select Supplier Response File",
+                filetypes=[("Supplier Files", "*.pdf *.xlsx *.xls *.png *.jpg *.jpeg *.txt"), ("All Files", "*.*")]
+            )
+            if not attachment:
+                return
+            self.update_selected_communication_status("Response Received", response_path=attachment)
+        if not os.path.exists(attachment):
+            messagebox.showerror("File Missing", f"The linked response file does not exist:\n{attachment}")
+            return
+
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT COUNT(*)
+            FROM extracted_quotes
+            WHERE source_communication_id=? AND source_response_file=?
+        """, (comm_id, attachment))
+        already_done = c.fetchone()[0] or 0
+        conn.close()
+        if already_done:
+            messagebox.showinfo("Already Extracted", f"This response file already created {already_done} quote row(s).")
+            return
+
+        if hasattr(self, "followup_detail_box"):
+            self.set_detail_text(self.followup_detail_box, f"Extracting supplier response...\n\n{attachment}")
+        threading.Thread(target=self.extract_selected_response_file, args=(comm_id, attachment), daemon=True).start()
+
+    def extract_selected_response_file(self, comm_id, attachment):
+        try:
+            row = self.get_communication_record(comm_id)
+            if not row:
+                return
+            _id, workflow_type, workflow_id, supplier, email, subject, channel, _attachment, status, body, due, created, updated = row
+            context_note = (
+                f"This file is a supplier response to {workflow_type}-{workflow_id}. "
+                f"Expected supplier: {supplier}. Original subject: {subject}. "
+                "Extract only the supplier quotation details from the response."
+            )
+            result = self.extract_quote_file_result(attachment, context_note=context_note)
+            if supplier and not result.get("supplier_name"):
+                result["supplier_name"] = supplier
+            row_count = self.save_extracted_data_to_db(
+                os.path.basename(attachment),
+                result,
+                workflow_context={
+                    "workflow_type": workflow_type,
+                    "workflow_id": workflow_id,
+                    "communication_id": comm_id,
+                    "response_file_path": attachment,
+                    "review_notes": f"RFQ Response from communication #{comm_id}" if workflow_type == "RFQ" else f"Supplier response from communication #{comm_id}",
+                },
+            )
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                UPDATE communication_log
+                SET status='Response Processed', follow_up_due='', updated_at=datetime('now')
+                WHERE id=?
+            """, (comm_id,))
+            c.execute("""
+                INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+                VALUES (?, ?, 'Response Extracted', 'Response Processed', ?)
+            """, (workflow_type, workflow_id or 0, f"{row_count} quote row(s) created from {attachment}"))
+            if workflow_type == "RFQ":
+                c.execute("UPDATE rfq_register SET status='Responded', updated_at=datetime('now') WHERE id=?", (workflow_id,))
+            conn.commit()
+            conn.close()
+            self.after(0, self.load_all_quotes_from_db)
+            self.after(0, self.load_followups)
+            if workflow_type == "RFQ" and hasattr(self, "rfq_register_tree"):
+                self.after(0, self.load_rfq_register)
+            if workflow_type == "PO" and hasattr(self, "po_register_tree"):
+                self.after(0, self.load_po_register)
+            if hasattr(self, "dashboard_cards"):
+                self.after(0, self.update_dashboard_page)
+            self.after(0, lambda: messagebox.showinfo("Response Extracted", f"Created {row_count} quote row(s) from supplier response."))
+        except Exception as e:
+            self.after(0, lambda err=e: messagebox.showerror("Extraction Error", f"Failed to extract supplier response:\n{err}"))
 
     def set_detail_text(self, textbox, text):
         textbox.configure(state="normal")
