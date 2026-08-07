@@ -391,36 +391,39 @@ def init_db():
 
 class App(ctk.CTk):
     THEME = {
-        "app_bg": "#F5F7FA",
+        "app_bg": "#F3F6F8",
         "surface": "#FFFFFF",
-        "surface_alt": "#F1F5F9",
-        "surface_soft": "#F8FAFC",
-        "input_bg": "#FBFCFE",
-        "sidebar": "#111827",
-        "sidebar_hover": "#1F2937",
-        "primary": "#1E4E8C",
-        "primary_hover": "#173E70",
-        "success": "#15803D",
-        "success_hover": "#116A33",
-        "warning": "#B45309",
-        "warning_hover": "#92400E",
-        "danger": "#B91C1C",
-        "danger_hover": "#991B1B",
+        "surface_alt": "#EEF4F3",
+        "surface_soft": "#F8FAF9",
+        "input_bg": "#FFFFFF",
+        "sidebar": "#0B1220",
+        "sidebar_hover": "#162236",
+        "sidebar_active": "#123F4A",
+        "primary": "#0F766E",
+        "primary_hover": "#0B5F59",
+        "success": "#16803C",
+        "success_hover": "#116A31",
+        "warning": "#C47A17",
+        "warning_hover": "#A46413",
+        "danger": "#C2414B",
+        "danger_hover": "#9F313A",
         "text": "#111827",
-        "muted": "#6B7280",
-        "border": "#D9E2EC",
-        "border_strong": "#B8C5D3",
-        "table_header": "#E5EAF1",
-        "table_selected": "#D7E7F7",
-        "shadow": "#E8EDF3",
+        "muted": "#64748B",
+        "border": "#DCE6E4",
+        "border_strong": "#AFC4C0",
+        "table_header": "#EAF2F1",
+        "table_selected": "#D9EFEC",
+        "shadow": "#E5ECEA",
         "success_soft": "#ECFDF3",
-        "success_border": "#BBF7D0",
-        "warning_soft": "#FFF7ED",
-        "warning_border": "#FED7AA",
-        "danger_soft": "#FEF2F2",
-        "danger_border": "#FECACA",
-        "info_soft": "#EFF6FF",
-        "info_border": "#BFDBFE",
+        "success_border": "#BFE7C8",
+        "warning_soft": "#FFF7E8",
+        "warning_border": "#F2D49A",
+        "danger_soft": "#FFF1F2",
+        "danger_border": "#F4B7BE",
+        "info_soft": "#ECF7F5",
+        "info_border": "#B9DED8",
+        "accent_soft": "#F6F0E8",
+        "accent_border": "#E8D9C4",
     }
 
     def apply_app_theme(self):
@@ -442,8 +445,8 @@ class App(ctk.CTk):
             "fg_color": fg,
             "hover_color": hover,
             "text_color": text_color,
-            "corner_radius": 6,
-            "height": 32,
+            "corner_radius": 8,
+            "height": 36,
             "font": ctk.CTkFont(size=12, weight="bold"),
         }
         defaults.update(kwargs)
@@ -460,7 +463,7 @@ class App(ctk.CTk):
         }
         fg, border = variants.get(variant, variants["surface"])
         try:
-            widget.configure(fg_color=fg, border_color=border, border_width=1, corner_radius=8)
+            widget.configure(fg_color=fg, border_color=border, border_width=1, corner_radius=10)
         except Exception:
             pass
         return widget
@@ -480,11 +483,11 @@ class App(ctk.CTk):
         return widget
 
     def make_empty_state(self, parent, title, detail=""):
-        box = ctk.CTkFrame(parent, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
-        box.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(box, text=title, font=ctk.CTkFont(size=13, weight="bold"), text_color=self.THEME["text"]).pack(anchor="w", padx=14, pady=(12, 2))
+        box = ctk.CTkFrame(parent, fg_color=self.THEME["surface_soft"], border_color=self.THEME["border"], border_width=1, corner_radius=10)
+        box.pack(fill="x", padx=12, pady=12)
+        ctk.CTkLabel(box, text=title, font=ctk.CTkFont(size=14, weight="bold"), text_color=self.THEME["text"]).pack(anchor="w", padx=16, pady=(14, 2))
         if detail:
-            ctk.CTkLabel(box, text=detail, font=ctk.CTkFont(size=11), text_color=self.THEME["muted"], wraplength=520, justify="left").pack(anchor="w", padx=14, pady=(0, 12))
+            ctk.CTkLabel(box, text=detail, font=ctk.CTkFont(size=11), text_color=self.THEME["muted"], wraplength=520, justify="left").pack(anchor="w", padx=16, pady=(0, 14))
         return box
 
     def make_tabview(self, parent):
@@ -493,14 +496,14 @@ class App(ctk.CTk):
             fg_color=self.THEME["surface"],
             border_color=self.THEME["border"],
             border_width=1,
-            corner_radius=8,
+            corner_radius=10,
             segmented_button_fg_color=self.THEME["surface_alt"],
             segmented_button_selected_color=self.THEME["primary"],
             segmented_button_selected_hover_color=self.THEME["primary_hover"],
             segmented_button_unselected_color=self.THEME["surface_alt"],
-            segmented_button_unselected_hover_color="#DDE6F0",
+            segmented_button_unselected_hover_color="#DCE9E7",
             text_color=self.THEME["text"],
-            segmented_button_font=ctk.CTkFont(size=12),
+            segmented_button_font=ctk.CTkFont(size=12, weight="bold"),
         )
 
     def style_workspace_table(self, style_name="Treeview"):
@@ -510,10 +513,10 @@ class App(ctk.CTk):
             style_name,
             background=self.THEME["surface"],
             foreground=self.THEME["text"],
-            rowheight=28,
+            rowheight=34,
             fieldbackground=self.THEME["surface"],
             borderwidth=0,
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 10),
         )
         style.map(
             style_name,
@@ -526,7 +529,7 @@ class App(ctk.CTk):
             foreground=self.THEME["text"],
             borderwidth=0,
             relief="flat",
-            font=("Segoe UI", 9, "bold"),
+            font=("Segoe UI", 10, "bold"),
         )
 
     def _is_inside_sidebar(self, widget):
@@ -807,23 +810,23 @@ class App(ctk.CTk):
 
         # Initialize database tables
         init_db()        # Configure grid layout: Left Sidebar (0), Middle Workspace (1, weight 1), Right Preview (2)
-        self.grid_columnconfigure(0, weight=0, minsize=240)
+        self.grid_columnconfigure(0, weight=0, minsize=220)
         self.grid_columnconfigure(1, weight=3)
-        self.grid_columnconfigure(2, weight=0, minsize=360)
+        self.grid_columnconfigure(2, weight=0, minsize=0)
         self.grid_rowconfigure(0, weight=1)
 
         # --- LEFT PANEL: Sidebar Navigation Menu ---
-        self.sidebar_frame = ctk.CTkFrame(self, width=240, corner_radius=0, fg_color=self.THEME["sidebar"])
+        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=self.THEME["sidebar"])
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         
-        self.logo_lbl = ctk.CTkLabel(self.sidebar_frame, text="ProcureAI", font=ctk.CTkFont(size=22, weight="bold"), text_color="white")
-        self.logo_lbl.pack(pady=(24, 2), padx=18, anchor="w")
-        self.logo_subtitle = ctk.CTkLabel(self.sidebar_frame, text="Sourcing command center", font=ctk.CTkFont(size=11), text_color="#9CA3AF")
-        self.logo_subtitle.pack(pady=(0, 22), padx=18, anchor="w")
+        self.logo_lbl = ctk.CTkLabel(self.sidebar_frame, text="ProcureAI", font=ctk.CTkFont(size=24, weight="bold"), text_color="white")
+        self.logo_lbl.pack(pady=(28, 2), padx=20, anchor="w")
+        self.logo_subtitle = ctk.CTkLabel(self.sidebar_frame, text="Enterprise procurement", font=ctk.CTkFont(size=11), text_color="#A7B4C5")
+        self.logo_subtitle.pack(pady=(0, 26), padx=20, anchor="w")
 
         # Container for navigation list
         self.nav_container = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
-        self.nav_container.pack(fill="both", expand=True, padx=10, pady=5)
+        self.nav_container.pack(fill="both", expand=True, padx=12, pady=5)
         
         # Navigation buttons mapping
         self.sidebar_buttons = {}
@@ -853,36 +856,38 @@ class App(ctk.CTk):
                 anchor="w", 
                 variant="ghost",
                 command=lambda pk=page_key: self.show_page(pk),
-                height=38
+                height=42,
+                corner_radius=10
             )
-            btn.pack(fill="x", pady=3, padx=0)
+            btn.pack(fill="x", pady=4, padx=0)
             self.sidebar_buttons[page_key] = btn
 
         # --- MIDDLE PANEL: Active Page Container ---
         self.sidebar_visible = True
-        self.sourcing_files_visible = True
-        self.document_preview_visible = True
+        self.sourcing_files_visible = False
+        self.document_preview_visible = False
 
         self.right_frame = ctk.CTkFrame(self, corner_radius=0, fg_color=self.THEME["app_bg"])
-        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=14, pady=14)
+        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=18, pady=16)
         self.right_frame.grid_columnconfigure(0, weight=1)
         self.right_frame.grid_rowconfigure(0, weight=0) # Control header row
         self.right_frame.grid_rowconfigure(1, weight=1) # Page content row
 
         # Control header bar
-        self.top_control_bar = ctk.CTkFrame(self.right_frame, height=42, fg_color="transparent")
-        self.top_control_bar.grid(row=0, column=0, sticky="ew", padx=2, pady=(0, 8))
+        self.top_control_bar = ctk.CTkFrame(self.right_frame, height=48, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=12)
+        self.top_control_bar.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 12))
+        self.top_control_bar.grid_propagate(False)
 
         self.btn_toggle_nav = ctk.CTkButton(self.top_control_bar, text="☰ Hide Navigation", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=130, height=28, command=self.toggle_navigation_sidebar)
-        self.btn_toggle_nav.pack(side="left", padx=5)
-        self.btn_toggle_nav.configure(text="Hide Navigation", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], height=30)
+        self.btn_toggle_nav.pack(side="left", padx=(12, 5), pady=8)
+        self.btn_toggle_nav.configure(text="Hide Navigation", fg_color=self.THEME["surface_alt"], hover_color="#DCE9E7", text_color=self.THEME["text"], height=32, corner_radius=8)
 
         self.btn_toggle_files = ctk.CTkButton(self.top_control_bar, text="📁 Hide Source Files", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=140, height=28, command=self.toggle_sourcing_files)
-        self.btn_toggle_files.configure(text="Hide Source Files", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], height=30)
+        self.btn_toggle_files.configure(text="Show Source Files", fg_color=self.THEME["surface_alt"], hover_color="#DCE9E7", text_color=self.THEME["text"], height=32, corner_radius=8)
         # Will be packed dynamically inside show_page()
 
         self.btn_toggle_preview = ctk.CTkButton(self.top_control_bar, text="📄 Hide Preview", fg_color="#1f538d", hover_color="#153e6b", font=ctk.CTkFont(size=11, weight="bold"), width=110, height=28, command=self.toggle_document_preview)
-        self.btn_toggle_preview.configure(text="Hide Preview", fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], height=30)
+        self.btn_toggle_preview.configure(text="Show Preview", fg_color=self.THEME["surface_alt"], hover_color="#DCE9E7", text_color=self.THEME["text"], height=32, corner_radius=8)
         # Will be packed dynamically inside show_page()
 
         self.pages_container = ctk.CTkFrame(self.right_frame, fg_color="transparent")
@@ -913,15 +918,15 @@ class App(ctk.CTk):
         tab_history = self.sourcing_tabview.add("📈 Price History")
 
         # Split frame layout inside Quotes Comparison tab
-        tab_comp.grid_columnconfigure(0, weight=0, minsize=260)
+        tab_comp.grid_columnconfigure(0, weight=0, minsize=300)
         tab_comp.grid_columnconfigure(1, weight=1)
         tab_comp.grid_rowconfigure(0, weight=1)
 
-        self.sourcing_files_subframe = ctk.CTkFrame(tab_comp, width=260, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
-        self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(5, 10), pady=10)
+        self.sourcing_files_subframe = ctk.CTkFrame(tab_comp, width=300, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=12)
+        self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(6, 12), pady=12)
         
         self.sourcing_grid_subframe = ctk.CTkFrame(tab_comp, fg_color="transparent")
-        self.sourcing_grid_subframe.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+        self.sourcing_grid_subframe.grid(row=0, column=1, sticky="nsew", padx=(6, 12), pady=12)
         self.sourcing_grid_subframe.grid_columnconfigure(0, weight=1)
         self.sourcing_grid_subframe.grid_rowconfigure(2, weight=1)
 
@@ -972,6 +977,9 @@ class App(ctk.CTk):
         self.progress_bar = ctk.CTkProgressBar(self.sourcing_files_subframe)
         self.progress_bar.pack(fill="x", padx=10, pady=5)
         self.progress_bar.set(0)
+        if not self.sourcing_files_visible:
+            self.sourcing_files_subframe.grid_forget()
+            self.tab_comp_ref.grid_columnconfigure(0, minsize=0, weight=0)
 
         # ---------------------------------------------
         # 2. Workspace: Scorecard & Compliance
@@ -1312,8 +1320,9 @@ class App(ctk.CTk):
         self.setup_global_barriers_tab()
 
         # --- RIGHT PANEL 2: Document Preview Sidebar ---
-        self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=0, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1)
-        self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 14), pady=14)
+        self.preview_frame = ctk.CTkFrame(self, width=360, corner_radius=12, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1)
+        if self.document_preview_visible:
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 16), pady=16)
         self.preview_frame.grid_columnconfigure(0, weight=1)
         self.preview_frame.grid_rowconfigure(3, weight=1)
 
@@ -1380,8 +1389,8 @@ class App(ctk.CTk):
         ).grid(row=1, column=0, sticky="w", pady=(3, 0))
 
         self.dashboard_cards_frame = ctk.CTkFrame(page, fg_color="transparent")
-        self.dashboard_cards_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 10))
-        for idx in range(6):
+        self.dashboard_cards_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 14))
+        for idx in range(4):
             self.dashboard_cards_frame.grid_columnconfigure(idx, weight=1, uniform="dash_cards")
 
         self.dashboard_cards = {}
@@ -1408,26 +1417,28 @@ class App(ctk.CTk):
                 border_width=1,
                 corner_radius=8,
             )
-            card.grid(row=idx // 6, column=idx % 6, sticky="nsew", padx=6, pady=4)
-            title_lbl = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["muted"])
-            title_lbl.pack(anchor="w", padx=14, pady=(12, 2))
-            value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"])
-            value_lbl.pack(anchor="w", padx=14, pady=(0, 12))
+            card.grid(row=idx // 4, column=idx % 4, sticky="nsew", padx=8, pady=6)
+            accent = ctk.CTkFrame(card, fg_color=self.THEME["primary"], height=3, corner_radius=3)
+            accent.pack(fill="x", padx=14, pady=(12, 4))
+            title_lbl = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12, weight="bold"), text_color=self.THEME["muted"])
+            title_lbl.pack(anchor="w", padx=16, pady=(2, 2))
+            value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=24, weight="bold"), text_color=self.THEME["text"])
+            value_lbl.pack(anchor="w", padx=16, pady=(0, 14))
             self.dashboard_cards[key] = value_lbl
             self.dashboard_card_frames[key] = card
-            for widget in (card, title_lbl, value_lbl):
+            for widget in (card, accent, title_lbl, value_lbl):
                 widget.bind("<Button-1>", lambda event, route_key=key: self.open_dashboard_route(route_key))
-                widget.bind("<Enter>", lambda event, frame=card: frame.configure(border_color=self.THEME["primary"]))
-                widget.bind("<Leave>", lambda event, frame=card: frame.configure(border_color=self.THEME["border"]))
+                widget.bind("<Enter>", lambda event, frame=card: self.animate_dashboard_card(frame, True))
+                widget.bind("<Leave>", lambda event, frame=card: self.animate_dashboard_card(frame, False))
 
         body = ctk.CTkFrame(page, fg_color="transparent")
         body.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
-        body.grid_columnconfigure(0, weight=3)
-        body.grid_columnconfigure(1, weight=2)
+        body.grid_columnconfigure(0, weight=2)
+        body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
         left = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
-        left.grid(row=0, column=0, sticky="nsew", padx=(6, 8), pady=6)
+        left.grid(row=0, column=0, sticky="nsew", padx=(8, 10), pady=8)
         left.grid_columnconfigure(0, weight=1)
         left.grid_rowconfigure(2, weight=1)
 
@@ -1463,7 +1474,7 @@ class App(ctk.CTk):
         self.dashboard_approval_tree.bind("<Double-1>", lambda event: self.open_dashboard_quote_in_quotes())
 
         right = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
-        right.grid(row=0, column=1, sticky="nsew", padx=(8, 6), pady=6)
+        right.grid(row=0, column=1, sticky="nsew", padx=(10, 8), pady=8)
         right.grid_columnconfigure(0, weight=1)
         right.grid_rowconfigure(1, weight=2)
         right.grid_rowconfigure(3, weight=1)
@@ -1474,6 +1485,16 @@ class App(ctk.CTk):
         ctk.CTkLabel(right, text="Today's Action Queue", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=2, column=0, sticky="w", padx=16, pady=(4, 8))
         self.dashboard_actions_box = ctk.CTkTextbox(right, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
         self.dashboard_actions_box.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 16))
+
+    def animate_dashboard_card(self, card, active):
+        try:
+            if active:
+                card.configure(border_color=self.THEME["primary"], fg_color=self.THEME["info_soft"])
+                self.after(70, lambda: card.configure(border_color=self.THEME["primary"], fg_color=self.THEME["surface"]) if card.winfo_exists() else None)
+            else:
+                card.configure(border_color=self.THEME["border"], fg_color=self.THEME["surface"])
+        except Exception:
+            pass
 
     def update_dashboard_page(self):
         if not hasattr(self, "dashboard_cards"):
@@ -4885,6 +4906,7 @@ class App(ctk.CTk):
         # Show selected page
         self.pages[page_name].grid(row=0, column=0, sticky="nsew")
         self.active_page = page_name
+        self.animate_page_enter(self.pages[page_name])
         if page_name == "Dashboard":
             self.update_dashboard_page()
         self.apply_legacy_light_polish(self.pages[page_name])
@@ -4892,13 +4914,13 @@ class App(ctk.CTk):
         # Highlight active sidebar button
         for name, btn in self.sidebar_buttons.items():
             if name == page_name:
-                btn.configure(fg_color=self.THEME["primary"], text_color="white")
+                btn.configure(fg_color=self.THEME["sidebar_active"], text_color="white")
             else:
                 btn.configure(fg_color="transparent", text_color="#D1D5DB")
                 
         # Toggle document preview frame visibility based on page and user visibility preference
         if page_name in ["Sourcing Analysis", "Settings Directory"] and self.document_preview_visible:
-            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 14), pady=14)
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 16), pady=16)
             self.grid_columnconfigure(2, minsize=360, weight=0)
         else:
             self.preview_frame.grid_forget()
@@ -4906,14 +4928,23 @@ class App(ctk.CTk):
 
         # Show/Hide Toggle Buttons dynamically based on page context
         if page_name == "Sourcing Analysis":
-            self.btn_toggle_files.pack(side="left", padx=5)
+            self.btn_toggle_files.pack(side="left", padx=5, pady=8)
         else:
             self.btn_toggle_files.pack_forget()
 
         if page_name in ["Sourcing Analysis", "Settings Directory"]:
-            self.btn_toggle_preview.pack(side="left", padx=5)
+            self.btn_toggle_preview.pack(side="left", padx=5, pady=8)
         else:
             self.btn_toggle_preview.pack_forget()
+
+    def animate_page_enter(self, frame):
+        if getattr(self, "_is_closing", False):
+            return
+        try:
+            frame.configure(fg_color="#EEF4F3")
+            self.after(55, lambda: frame.configure(fg_color="transparent") if frame.winfo_exists() else None)
+        except Exception:
+            pass
 
     # --- Folder Logic ---
     def select_folder(self):
@@ -10619,7 +10650,7 @@ Authorized Signature: ___________________________
             self.sidebar_visible = False
         else:
             self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-            self.grid_columnconfigure(0, minsize=240, weight=0)
+            self.grid_columnconfigure(0, minsize=220, weight=0)
             self.btn_toggle_nav.configure(fg_color="#1f538d", text="☰ Hide Navigation")
             self.btn_toggle_nav.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Navigation")
             self.sidebar_visible = True
@@ -10634,8 +10665,8 @@ Authorized Signature: ___________________________
             self.btn_toggle_files.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Show Source Files")
             self.sourcing_files_visible = False
         else:
-            self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(5, 10), pady=10)
-            self.tab_comp_ref.grid_columnconfigure(0, minsize=260, weight=0)
+            self.sourcing_files_subframe.grid(row=0, column=0, sticky="nsew", padx=(6, 12), pady=12)
+            self.tab_comp_ref.grid_columnconfigure(0, minsize=300, weight=0)
             self.btn_toggle_files.configure(fg_color="#1f538d", text="📁 Hide Source Files")
             self.btn_toggle_files.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Source Files")
             self.sourcing_files_visible = True
@@ -10648,7 +10679,7 @@ Authorized Signature: ___________________________
             self.btn_toggle_preview.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Show Preview")
             self.document_preview_visible = False
         else:
-            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 14), pady=14)
+            self.preview_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 16), pady=16)
             self.grid_columnconfigure(2, minsize=360, weight=0)
             self.btn_toggle_preview.configure(fg_color="#1f538d", text="📄 Hide Preview")
             self.btn_toggle_preview.configure(fg_color=self.THEME["surface_alt"], hover_color="#E2E8F0", text_color=self.THEME["text"], text="Hide Preview")
