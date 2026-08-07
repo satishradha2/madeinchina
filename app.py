@@ -1375,6 +1375,7 @@ class App(ctk.CTk):
             self.dashboard_cards_frame.grid_columnconfigure(idx, weight=1, uniform="dash_cards")
 
         self.dashboard_cards = {}
+        self.dashboard_card_frames = {}
         card_specs = [
             ("review", "Needs Review", "0"),
             ("approved_ready_rfq", "RFQ Ready", "0"),
@@ -1398,10 +1399,16 @@ class App(ctk.CTk):
                 corner_radius=8,
             )
             card.grid(row=idx // 6, column=idx % 6, sticky="nsew", padx=6, pady=4)
-            ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["muted"]).pack(anchor="w", padx=14, pady=(12, 2))
+            title_lbl = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["muted"])
+            title_lbl.pack(anchor="w", padx=14, pady=(12, 2))
             value_lbl = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"])
             value_lbl.pack(anchor="w", padx=14, pady=(0, 12))
             self.dashboard_cards[key] = value_lbl
+            self.dashboard_card_frames[key] = card
+            for widget in (card, title_lbl, value_lbl):
+                widget.bind("<Button-1>", lambda event, route_key=key: self.open_dashboard_route(route_key))
+                widget.bind("<Enter>", lambda event, frame=card: frame.configure(border_color=self.THEME["primary"]))
+                widget.bind("<Leave>", lambda event, frame=card: frame.configure(border_color=self.THEME["border"]))
 
         body = ctk.CTkFrame(page, fg_color="transparent")
         body.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
@@ -1564,6 +1571,120 @@ class App(ctk.CTk):
         self.dashboard_actions_box.delete("1.0", tk.END)
         self.dashboard_actions_box.insert("1.0", "\n\n".join(f"- {a}" for a in actions))
         self.dashboard_actions_box.configure(state="disabled")
+
+    def open_dashboard_route(self, route_key):
+        routes = {
+            "review": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "needs_review"),
+            "approved": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "approved"),
+            "approved_ready_rfq": ("RFQs Outreach", self.rfqs_tabview, "RFQ Generator", "approved_ready_rfq"),
+            "suppliers_not_ready": ("Settings Directory", self.settings_tabview, "Master Data", "supplier_gaps"),
+            "suppliers_ready_po": ("Logistics Costing", self.logistics_tabview, "PO Generator", "po_ready"),
+            "open_exceptions": ("Settings Directory", self.settings_tabview, "Exception Register", "exceptions"),
+            "expiring_docs": ("Settings Directory", self.settings_tabview, "Master Data", "doc_expiry"),
+            "rfq_open": ("RFQs Outreach", self.rfqs_tabview, "RFQ Register", "rfq_open"),
+            "po_open": ("Logistics Costing", self.logistics_tabview, "PO Register", "po_open"),
+            "po_value": ("Logistics Costing", self.logistics_tabview, "PO Register", "po_open"),
+            "expired": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "expired"),
+            "high_risk": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "high_risk"),
+        }
+        route = routes.get(route_key)
+        if not route:
+            return
+        page_name, tabview, tab_text, focus_key = route
+        self.show_page(page_name)
+        self.set_tab_by_contains(tabview, tab_text)
+        self.after(100, lambda: self.apply_dashboard_focus(focus_key))
+
+    def apply_dashboard_focus(self, focus_key):
+        if focus_key in {"needs_review", "approved", "expired", "high_risk"}:
+            self.focus_quote_row_by_condition(focus_key)
+        elif focus_key in {"supplier_gaps", "doc_expiry"}:
+            self.focus_supplier_master_by_condition(focus_key)
+        elif focus_key == "exceptions":
+            self.focus_first_tree_row(getattr(self, "exception_tree", None), status_index=5, preferred_status="Requested")
+        elif focus_key == "rfq_open":
+            self.focus_first_tree_row(getattr(self, "rfq_register_tree", None), status_index=6, exclude_statuses={"Closed", "Cancelled"})
+        elif focus_key == "po_open":
+            self.focus_first_tree_row(getattr(self, "po_register_tree", None), status_index=6, exclude_statuses={"Closed", "Cancelled"})
+
+    def focus_first_tree_row(self, tree, status_index=None, preferred_status=None, exclude_statuses=None):
+        if not tree:
+            return
+        target = None
+        for item in tree.get_children():
+            vals = tree.item(item, "values")
+            status = vals[status_index] if status_index is not None and len(vals) > status_index else ""
+            if preferred_status and status != preferred_status:
+                continue
+            if exclude_statuses and status in exclude_statuses:
+                continue
+            target = item
+            break
+        if not target:
+            children = tree.get_children()
+            target = children[0] if children else None
+        if target:
+            tree.selection_set(target)
+            tree.focus(target)
+            tree.see(target)
+
+    def focus_quote_row_by_condition(self, condition):
+        if not hasattr(self, "tree"):
+            return
+        import datetime
+        today = datetime.date.today()
+        target_id = None
+        for row in self.extracted_data:
+            if condition == "needs_review" and (row.get("review_status") or "Needs Review") != "Needs Review":
+                continue
+            if condition == "approved" and row.get("review_status") != "Approved":
+                continue
+            if condition == "high_risk" and "high" not in str(row.get("sourcing_risk") or "").lower():
+                continue
+            if condition == "expired":
+                try:
+                    valid = datetime.datetime.strptime(str(row.get("validity_date")), "%Y-%m-%d").date()
+                    if valid >= today:
+                        continue
+                except Exception:
+                    continue
+            target_id = str(row.get("id"))
+            break
+        if not target_id:
+            return
+        for item in self.tree.get_children():
+            vals = self.tree.item(item, "values")
+            if vals and str(vals[0]) == target_id:
+                self.tree.selection_set(item)
+                self.tree.focus(item)
+                self.tree.see(item)
+                break
+
+    def focus_supplier_master_by_condition(self, condition):
+        tree = getattr(self, "supplier_master_tree", None)
+        if not tree:
+            return
+        target = None
+        for item in tree.get_children():
+            vals = tree.item(item, "values")
+            if not vals:
+                continue
+            readiness = vals[4] if len(vals) > 4 else ""
+            verified = vals[6] if len(vals) > 6 else ""
+            if condition == "supplier_gaps" and (readiness != "Ready for PO" or verified != "Yes"):
+                target = item
+                break
+            if condition == "doc_expiry" and readiness != "Ready for PO":
+                target = item
+                break
+        if not target:
+            children = tree.get_children()
+            target = children[0] if children else None
+        if target:
+            tree.selection_set(target)
+            tree.focus(target)
+            tree.see(target)
+            self.load_supplier_documents_for_selection()
 
     def get_workflow_dashboard_snapshot(self):
         snapshot = {"open_rfqs": 0, "open_pos": 0, "open_po_value": 0.0, "timeline": []}
