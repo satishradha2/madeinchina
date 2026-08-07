@@ -64,7 +64,7 @@ install_dependencies()
 # --- Main App Imports ---
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 import pandas as pd
 from PIL import Image
 from google import genai
@@ -286,6 +286,26 @@ def init_db():
             note TEXT,
             actor TEXT DEFAULT 'Local User',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS exception_register (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exception_type TEXT,
+            workflow_type TEXT,
+            workflow_ref TEXT,
+            related_quote_id INTEGER,
+            supplier_name TEXT,
+            product_name TEXT,
+            reason TEXT,
+            justification TEXT,
+            status TEXT DEFAULT 'Requested',
+            decision_note TEXT,
+            requested_by TEXT DEFAULT 'Local User',
+            decided_by TEXT,
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            decided_at TEXT,
+            closed_at TEXT
         )
     """)
         
@@ -1008,6 +1028,7 @@ class App(ctk.CTk):
         tab_settings = self.settings_tabview.add("⚙️ Settings & API")
         tab_dir = self.settings_tabview.add("📇 Supplier Directory")
         tab_master = self.settings_tabview.add("Master Data")
+        tab_exceptions = self.settings_tabview.add("Exception Register")
         
         settings_card = ctk.CTkFrame(tab_settings, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         settings_card.pack(pady=20, padx=20, fill="both", expand=True)
@@ -1202,6 +1223,7 @@ class App(ctk.CTk):
         self.directory_scroll_frame.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
 
         self.setup_master_data_tab()
+        self.setup_exception_register_tab()
 
         # --- PAGE 3: Visual Price Comparison Charts ---
         tab_charts = self.sourcing_tabview.tab("📈 Visual Charts")
@@ -3253,6 +3275,217 @@ class App(ctk.CTk):
         conn.close()
         self.load_master_data_tables()
 
+    def setup_exception_register_tab(self):
+        tab = self.settings_tabview.tab("Exception Register")
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_columnconfigure(1, weight=0, minsize=360)
+        tab.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(tab, fg_color="transparent")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="Exception Register", font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text="Controlled approvals for urgent RFQ/PO overrides, supplier gaps, quote risks, and missing compliance documents.", font=ctk.CTkFont(size=12), text_color=self.THEME["muted"]).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.make_button(header, "New Exception", command=self.open_manual_exception_dialog, variant="primary", width=120).grid(row=0, column=1, rowspan=2, padx=4)
+        self.make_button(header, "Refresh", command=self.load_exception_register, variant="secondary", width=90).grid(row=0, column=2, rowspan=2, padx=4)
+        self.make_button(header, "Approve", command=lambda: self.update_selected_exception_status("Approved"), variant="success", width=85).grid(row=0, column=3, rowspan=2, padx=4)
+        self.make_button(header, "Reject", command=lambda: self.update_selected_exception_status("Rejected"), variant="danger", width=75).grid(row=0, column=4, rowspan=2, padx=4)
+        self.make_button(header, "Close", command=lambda: self.update_selected_exception_status("Closed"), variant="secondary", width=70).grid(row=0, column=5, rowspan=2, padx=4)
+
+        frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+
+        cols = ("id", "type", "workflow", "supplier", "product", "status", "requested")
+        self.exception_tree = ttk.Treeview(frame, columns=cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 55),
+            ("type", "Type", 145),
+            ("workflow", "Workflow", 95),
+            ("supplier", "Supplier", 140),
+            ("product", "Product", 125),
+            ("status", "Status", 95),
+            ("requested", "Requested", 135),
+        ]:
+            self.exception_tree.heading(col, text=label)
+            self.exception_tree.column(col, width=width, anchor="w")
+        self.exception_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.exception_tree.bind("<<TreeviewSelect>>", lambda event: self.show_exception_detail())
+
+        detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
+        detail.grid_columnconfigure(0, weight=1)
+        detail.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(detail, text="Exception Detail", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 8))
+        self.exception_detail_box = ctk.CTkTextbox(detail, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.exception_detail_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
+        self.exception_detail_box.insert("1.0", "Select an exception row to view justification, decision notes, and audit context.")
+        self.exception_detail_box.configure(state="disabled")
+        self.load_exception_register()
+
+    def load_exception_register(self):
+        if not hasattr(self, "exception_tree"):
+            return
+        self.exception_tree.delete(*self.exception_tree.get_children())
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, exception_type, workflow_type, COALESCE(supplier_name, ''),
+                   COALESCE(product_name, ''), status, requested_at
+            FROM exception_register
+            ORDER BY
+                CASE status WHEN 'Requested' THEN 0 WHEN 'Approved' THEN 1 WHEN 'Rejected' THEN 2 ELSE 3 END,
+                datetime(requested_at) DESC,
+                id DESC
+        """)
+        for row in c.fetchall():
+            self.exception_tree.insert("", tk.END, values=row)
+        conn.close()
+        if hasattr(self, "exception_detail_box"):
+            self.set_detail_text(self.exception_detail_box, "Select an exception row to view justification, decision notes, and audit context.")
+
+    def get_selected_exception_id(self):
+        if not hasattr(self, "exception_tree"):
+            return None
+        sel = self.exception_tree.selection()
+        if not sel:
+            return None
+        vals = self.exception_tree.item(sel[0], "values")
+        try:
+            return int(vals[0])
+        except Exception:
+            return None
+
+    def show_exception_detail(self):
+        exception_id = self.get_selected_exception_id()
+        if not exception_id:
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT exception_type, workflow_type, workflow_ref, related_quote_id, supplier_name,
+                   product_name, reason, justification, status, decision_note, requested_by,
+                   decided_by, requested_at, decided_at, closed_at
+            FROM exception_register
+            WHERE id=?
+        """, (exception_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        exception_type, workflow_type, workflow_ref, quote_id, supplier, product, reason, justification, status, decision_note, requested_by, decided_by, requested_at, decided_at, closed_at = row
+        audit = "\n\n".join(self.get_workflow_audit_lines("Exception", exception_id))
+        text = (
+            f"Exception #{exception_id}\n"
+            f"Type: {exception_type}\n"
+            f"Status: {status}\n"
+            f"Workflow: {workflow_type} {workflow_ref or ''}\n"
+            f"Related Quote ID: {quote_id or 'N/A'}\n"
+            f"Supplier: {supplier or 'N/A'}\n"
+            f"Product: {product or 'N/A'}\n\n"
+            f"Reason:\n{reason or 'N/A'}\n\n"
+            f"Business Justification:\n{justification or 'N/A'}\n\n"
+            f"Decision Note:\n{decision_note or 'N/A'}\n\n"
+            f"Requested By: {requested_by or 'Local User'} at {requested_at}\n"
+            f"Decided By: {decided_by or 'N/A'} at {decided_at or 'N/A'}\n"
+            f"Closed At: {closed_at or 'N/A'}\n\n"
+            f"Audit:\n{audit}"
+        )
+        self.set_detail_text(self.exception_detail_box, text)
+
+    def update_selected_exception_status(self, status):
+        exception_id = self.get_selected_exception_id()
+        if not exception_id:
+            messagebox.showwarning("Select Exception", "Please select an exception request first.")
+            return
+        note = simpledialog.askstring("Decision Note", f"Enter note for {status.lower()} decision:")
+        if note is None:
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        if status == "Closed":
+            c.execute("""
+                UPDATE exception_register
+                SET status='Closed', decision_note=?, closed_at=datetime('now')
+                WHERE id=?
+            """, (note.strip(), exception_id))
+        else:
+            c.execute("""
+                UPDATE exception_register
+                SET status=?, decision_note=?, decided_by='Local User', decided_at=datetime('now')
+                WHERE id=?
+            """, (status, note.strip(), exception_id))
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES ('Exception', ?, 'Status Changed', ?, ?)
+        """, (exception_id, status, note.strip()))
+        conn.commit()
+        conn.close()
+        self.load_exception_register()
+        self.show_exception_detail()
+
+    def open_manual_exception_dialog(self):
+        win = ctk.CTkToplevel(self)
+        win.title("New Exception Request")
+        win.geometry("620x520")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.grid_columnconfigure(1, weight=1)
+
+        fields = {}
+        rows = [
+            ("Exception Type", "exception_type", ["Compliance Document", "Expired Document", "Supplier Governance", "High Risk Quote", "Expired Quote", "Unapproved Quote", "Workflow Override"]),
+            ("Workflow", "workflow_type", ["RFQ", "PO", "Supplier", "Quote", "Other"]),
+            ("Workflow Ref", "workflow_ref", None),
+            ("Supplier", "supplier_name", None),
+            ("Product", "product_name", None),
+            ("Related Quote ID", "quote_id", None),
+        ]
+        for idx, (label, field, options) in enumerate(rows):
+            ctk.CTkLabel(win, text=f"{label}:").grid(row=idx, column=0, sticky="w", padx=15, pady=6)
+            if options:
+                widget = ctk.CTkComboBox(win, values=options)
+                widget.set(options[0])
+            else:
+                widget = ctk.CTkEntry(win)
+            widget.grid(row=idx, column=1, sticky="ew", padx=15, pady=6)
+            fields[field] = widget
+
+        ctk.CTkLabel(win, text="Reason:").grid(row=6, column=0, sticky="nw", padx=15, pady=6)
+        reason_box = ctk.CTkTextbox(win, height=80)
+        reason_box.grid(row=6, column=1, sticky="ew", padx=15, pady=6)
+        ctk.CTkLabel(win, text="Justification:").grid(row=7, column=0, sticky="nw", padx=15, pady=6)
+        just_box = ctk.CTkTextbox(win, height=100)
+        just_box.grid(row=7, column=1, sticky="ew", padx=15, pady=6)
+
+        def submit():
+            quote_id = None
+            try:
+                quote_id = int(fields["quote_id"].get().strip()) if fields["quote_id"].get().strip() else None
+            except Exception:
+                messagebox.showerror("Invalid Quote ID", "Related Quote ID must be numeric.", parent=win)
+                return
+            reason = reason_box.get("1.0", tk.END).strip()
+            if not reason:
+                messagebox.showerror("Missing Reason", "Please enter an exception reason.", parent=win)
+                return
+            exception_id = self.create_exception_request(
+                fields["exception_type"].get().strip(),
+                fields["workflow_type"].get().strip(),
+                fields["workflow_ref"].get().strip(),
+                reason,
+                just_box.get("1.0", tk.END).strip(),
+                quote={"id": quote_id} if quote_id else {},
+                supplier_name=fields["supplier_name"].get().strip(),
+                product_name=fields["product_name"].get().strip(),
+            )
+            win.destroy()
+            self.load_exception_register()
+            messagebox.showinfo("Exception Requested", f"Exception #{exception_id} created.")
+
+        self.make_button(win, "Submit Exception Request", command=submit, variant="success", width=190).grid(row=8, column=0, columnspan=2, pady=16)
+
     def get_product_master_id_by_name(self, product_name):
         if not product_name:
             return None
@@ -3406,6 +3639,148 @@ class App(ctk.CTk):
         if hasattr(self, "dashboard_cards"):
             self.update_dashboard_page()
 
+    def create_exception_request(self, exception_type, workflow_type, workflow_ref, reason, justification="", quote=None, supplier_name="", product_name=""):
+        quote = quote or {}
+        supplier = supplier_name or quote.get("supplier") or ""
+        product = product_name or quote.get("product") or ""
+        quote_id = quote.get("id")
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO exception_register (
+                exception_type, workflow_type, workflow_ref, related_quote_id,
+                supplier_name, product_name, reason, justification, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Requested')
+        """, (
+            exception_type,
+            workflow_type,
+            workflow_ref,
+            quote_id,
+            supplier,
+            product,
+            reason,
+            justification,
+        ))
+        exception_id = c.lastrowid
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES ('Exception', ?, 'Requested', 'Requested', ?)
+        """, (exception_id, f"{exception_type}: {reason}"))
+        conn.commit()
+        conn.close()
+        if hasattr(self, "exception_tree"):
+            self.load_exception_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
+        return exception_id
+
+    def has_approved_exception(self, exception_types, workflow_type="", supplier_name="", product_name="", quote_id=None):
+        if isinstance(exception_types, str):
+            exception_types = [exception_types]
+        placeholders = ",".join("?" for _ in exception_types)
+        params = list(exception_types)
+        filters = [f"exception_type IN ({placeholders})", "status='Approved'"]
+        if workflow_type:
+            filters.append("workflow_type=?")
+            params.append(workflow_type)
+        if supplier_name:
+            filters.append("(LOWER(supplier_name)=LOWER(?) OR supplier_name='')")
+            params.append(self.clean_supplier_name(supplier_name))
+        if product_name:
+            filters.append("(LOWER(product_name)=LOWER(?) OR product_name='')")
+            params.append(product_name)
+        if quote_id:
+            filters.append("(related_quote_id=? OR related_quote_id IS NULL)")
+            params.append(quote_id)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"""
+            SELECT id
+            FROM exception_register
+            WHERE {' AND '.join(filters)}
+            ORDER BY datetime(requested_at) DESC, id DESC
+            LIMIT 1
+        """, params)
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    def prompt_exception_request(self, exception_type, workflow_type, workflow_ref, reason, quote=None, supplier_name="", product_name=""):
+        if not messagebox.askyesno(
+            "Request Exception?",
+            f"This action is blocked:\n\n{reason}\n\nCreate an exception request for approval?"
+        ):
+            return None
+        justification = simpledialog.askstring(
+            "Exception Justification",
+            "Enter business justification for this exception:"
+        )
+        if justification is None:
+            return None
+        exception_id = self.create_exception_request(
+            exception_type,
+            workflow_type,
+            workflow_ref,
+            reason,
+            justification.strip(),
+            quote=quote,
+            supplier_name=supplier_name,
+            product_name=product_name,
+        )
+        messagebox.showinfo(
+            "Exception Requested",
+            f"Exception #{exception_id} was created.\nApprove it in Settings & System > Exception Register before proceeding."
+        )
+        return exception_id
+
+    def find_exception_type_for_issue(self, issue_text):
+        text = str(issue_text or "").lower()
+        if "expired" in text and "quote" in text:
+            return "Expired Quote"
+        if "approved quote" in text or "approve" in text:
+            return "Unapproved Quote"
+        if "supplier" in text and ("approval" in text or "preferred" in text or "contact" in text):
+            return "Supplier Governance"
+        if "document" in text or "compliance" in text or "certificate" in text:
+            return "Compliance Document"
+        if "risk" in text:
+            return "High Risk Quote"
+        return "Workflow Override"
+
+    def filter_blockers_with_approved_exceptions(self, blockers, workflow_type="", supplier_name="", product_name="", quote_id=None):
+        remaining = []
+        cleared = []
+        for blocker in blockers:
+            exception_type = self.find_exception_type_for_issue(blocker)
+            exception_id = self.has_approved_exception(
+                exception_type,
+                workflow_type=workflow_type,
+                supplier_name=supplier_name,
+                product_name=product_name,
+                quote_id=quote_id,
+            )
+            if exception_id:
+                cleared.append(f"{blocker} (approved exception #{exception_id})")
+            else:
+                remaining.append(blocker)
+        return remaining, cleared
+
+    def request_exception_for_blockers(self, blockers, workflow_type, workflow_ref="", quote=None, supplier_name="", product_name=""):
+        if not blockers:
+            return None
+        blocker = blockers[0]
+        exception_type = self.find_exception_type_for_issue(blocker)
+        return self.prompt_exception_request(
+            exception_type,
+            workflow_type,
+            workflow_ref,
+            blocker,
+            quote=quote,
+            supplier_name=supplier_name,
+            product_name=product_name,
+        )
+
     def parse_positive_int(self, value):
         try:
             parsed = int(str(value).replace(",", "").strip())
@@ -3478,6 +3853,19 @@ class App(ctk.CTk):
             issues.append("Payment terms are required.")
         if not self.po_address_entry.get().strip():
             issues.append("Delivery address is required.")
+
+        if supplier and supplier not in {"Select Supplier", "No approved quotes"}:
+            doc_readiness = self.get_supplier_document_readiness(supplier)
+            if doc_readiness["status"] != "Ready for PO":
+                detail = []
+                if doc_readiness["missing"]:
+                    detail.append("missing " + ", ".join(doc_readiness["missing"][:4]))
+                if doc_readiness["expired"]:
+                    detail.append("expired " + ", ".join(doc_readiness["expired"][:4]))
+                issues.append(
+                    "Supplier compliance documents are not Ready for PO"
+                    + (f" ({'; '.join(detail)})." if detail else ".")
+                )
 
         if quote:
             risk = str(quote.get("risk") or quote.get("sourcing_risk") or "").lower()
@@ -7527,9 +7915,18 @@ class App(ctk.CTk):
     def generate_rfq_pdf(self):
         issues, warnings = self.validate_rfq_ready()
         self.update_rfq_readiness_panel()
+        product_ref = self.rfq_name_entry.get().strip() or self.rfq_product_cb.get().strip()
+        issues, cleared_exceptions = self.filter_blockers_with_approved_exceptions(
+            issues,
+            workflow_type="RFQ",
+            product_name=product_ref,
+        )
+        if cleared_exceptions:
+            warnings.extend(cleared_exceptions)
         if issues:
             note = "; ".join(issues)
             self.log_workflow_blocked_attempt("RFQ", "Generate PDF Blocked", note)
+            self.request_exception_for_blockers(issues, "RFQ", "RFQ PDF", product_name=product_ref)
             messagebox.showerror(
                 "RFQ Not Ready",
                 "Fix these issues before generating the RFQ:\n\n- " + "\n- ".join(issues)
@@ -8315,9 +8712,18 @@ class App(ctk.CTk):
     def open_rfq_broadcast_popup(self):
         issues, warnings = self.validate_rfq_ready()
         self.update_rfq_readiness_panel()
+        product_ref = self.rfq_name_entry.get().strip() or self.rfq_product_cb.get().strip()
+        issues, cleared_exceptions = self.filter_blockers_with_approved_exceptions(
+            issues,
+            workflow_type="RFQ",
+            product_name=product_ref,
+        )
+        if cleared_exceptions:
+            warnings.extend(cleared_exceptions)
         if issues:
             note = "; ".join(issues)
             self.log_workflow_blocked_attempt("RFQ", "Broadcast Blocked", note)
+            self.request_exception_for_blockers(issues, "RFQ", "RFQ Broadcast", product_name=product_ref)
             messagebox.showerror(
                 "RFQ Not Ready",
                 "Fix these issues before broadcasting the RFQ:\n\n- " + "\n- ".join(issues)
@@ -8337,7 +8743,17 @@ class App(ctk.CTk):
             if is_eligible:
                 eligible_sups.append(supplier)
             else:
-                excluded_sups.append(f"{supplier}: {reason}")
+                exception_id = self.has_approved_exception(
+                    "Supplier Governance",
+                    workflow_type="RFQ",
+                    supplier_name=supplier,
+                    product_name=product_ref,
+                )
+                if exception_id:
+                    eligible_sups.append(supplier)
+                    warnings.append(f"{supplier}: supplier governance cleared by approved exception #{exception_id}.")
+                else:
+                    excluded_sups.append(f"{supplier}: {reason}")
         sorted_sups = eligible_sups
 
         if not sorted_sups:
@@ -8345,6 +8761,7 @@ class App(ctk.CTk):
             if excluded_sups:
                 note += " Excluded: " + "; ".join(excluded_sups[:8])
             self.log_workflow_blocked_attempt("RFQ", "Broadcast Blocked", note)
+            self.request_exception_for_blockers(["Supplier approval/preferred/contact governance blocks RFQ broadcast."], "RFQ", "RFQ Broadcast", product_name=product_ref)
             messagebox.showwarning(
                 "No RFQ-Eligible Suppliers",
                 "No suppliers qualify for RFQ broadcast.\n\nRequired:\n"
@@ -9603,10 +10020,20 @@ Authorized Signature: ___________________________
         payment = self.po_payment_entry.get().strip()
         issues, warnings = self.validate_po_ready()
         self.update_po_readiness_panel()
+        quote = getattr(self, "po_active_quote", None) or {}
+        issues, cleared_exceptions = self.filter_blockers_with_approved_exceptions(
+            issues,
+            workflow_type="PO",
+            supplier_name=supplier,
+            product_name=product,
+            quote_id=quote.get("id"),
+        )
+        if cleared_exceptions:
+            warnings.extend(cleared_exceptions)
         if issues:
             note = "; ".join(issues)
-            quote = getattr(self, "po_active_quote", None) or {}
             self.log_workflow_blocked_attempt("PO", "Issue PO Blocked", note, quote.get("id") or 0)
+            self.request_exception_for_blockers(issues, "PO", po_num or "PO Draft", quote=quote, supplier_name=supplier, product_name=product)
             messagebox.showerror(
                 "PO Not Ready",
                 "Fix these issues before issuing the PO:\n\n- " + "\n- ".join(issues)
@@ -9618,8 +10045,8 @@ Authorized Signature: ___________________________
             + "\n- ".join(warnings)
             + "\n\nContinue issuing this PO?"
         ):
-            quote = getattr(self, "po_active_quote", None) or {}
             self.log_workflow_blocked_attempt("PO", "Issue PO Blocked", "; ".join(warnings), quote.get("id") or 0)
+            self.request_exception_for_blockers(warnings, "PO", po_num or "PO Draft", quote=quote, supplier_name=supplier, product_name=product)
             return
 
         qty = self.parse_positive_int(self.po_qty_entry.get())
