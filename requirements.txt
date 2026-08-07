@@ -1,0 +1,8 @@
+customtkinter
+pandas
+openpyxl
+google-genai
+pillow
+pymupdf
+matplotlib
+reportlab

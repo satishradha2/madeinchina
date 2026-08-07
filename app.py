@@ -29,6 +29,7 @@ def install_dependencies():
         "pillow": "PIL",
         "pymupdf": "fitz",
         "matplotlib": "matplotlib",
+        "reportlab": "reportlab",
     }
     import importlib.util
 
@@ -72,7 +73,7 @@ def install_dependencies():
                 # Restart the script
                 os.execv(sys.executable, [sys.executable] + sys.argv)
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to install dependencies: {e}\nPlease run: pip install customtkinter pandas openpyxl google-genai pillow pymupdf matplotlib")
+                messagebox.showerror("Error", f"Failed to install dependencies: {e}\nPlease run: pip install customtkinter pandas openpyxl google-genai pillow pymupdf matplotlib reportlab")
                 sys.exit(1)
         else:
             sys.exit(0)
@@ -8259,7 +8260,7 @@ class App(ctk.CTk):
         self.set_detail_text(self.po_detail_box, text)
 
     def open_selected_register_document(self, register_type):
-        _, path = self.get_selected_register_id_and_path(register_type)
+        record_id, path = self.get_selected_register_id_and_path(register_type)
         if not path:
             messagebox.showwarning("No Document", f"No {register_type} PDF path is saved for the selected record.")
             return
@@ -8267,6 +8268,7 @@ class App(ctk.CTk):
             messagebox.showerror("File Missing", f"The saved document path does not exist:\n{path}")
             return
         os.startfile(path)
+        self.log_workflow_audit(register_type, record_id, "Document Opened", "Opened", path)
 
     def open_selected_register_folder(self, register_type):
         _, path = self.get_selected_register_id_and_path(register_type)
@@ -8280,11 +8282,37 @@ class App(ctk.CTk):
         os.startfile(folder)
 
     def copy_selected_register_path(self, register_type):
-        _, path = self.get_selected_register_id_and_path(register_type)
+        record_id, path = self.get_selected_register_id_and_path(register_type)
         if not path:
             messagebox.showwarning("No Document", f"No {register_type} PDF path is saved for the selected record.")
             return
         self.copy_to_clipboard(path)
+        self.log_workflow_audit(register_type, record_id, "Document Path Copied", "Copied", path)
+
+    def log_workflow_audit(self, workflow_type, workflow_id, action, status, note=""):
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+                VALUES (?, ?, ?, ?, ?)
+            """, (workflow_type, workflow_id or 0, action, status, note or ""))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    def get_buyer_profile(self):
+        return {
+            "name": "ProcureAI Hub Corp",
+            "address": "Dubai Airport Freezone, UAE",
+            "email": "sourcing@procureai.local",
+            "phone": "+971",
+        }
+
+    def format_usd_aed_total(self, amount_usd):
+        aed_rate = self.exchange_rates.get("AED", 3.6725) if hasattr(self, "exchange_rates") else 3.6725
+        return f"USD ${amount_usd:,.2f} / AED {amount_usd * aed_rate:,.2f}"
 
     def set_tab_by_contains(self, tabview, text):
         try:
@@ -8518,6 +8546,135 @@ class App(ctk.CTk):
         )
         
         if not file_path:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib import colors
+            from xml.sax.saxutils import escape
+            import datetime
+
+            today = datetime.date.today()
+            rfq_number = f"RFQ-{today.strftime('%Y%m%d')}-{prod_name[:4].upper()}"
+            buyer = self.get_buyer_profile()
+            doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=70, bottomMargin=44)
+            story = []
+            styles = getSampleStyleSheet()
+
+            primary_color = colors.HexColor("#0F766E")
+            border_color = colors.HexColor("#CBD5E1")
+            soft_fill = colors.HexColor("#F8FAFC")
+            text_color = colors.HexColor("#0F172A")
+
+            title_style = ParagraphStyle('RFQTitle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=24, textColor=primary_color, spaceAfter=4)
+            body_style = ParagraphStyle('RFQBody', parent=styles['Normal'], fontSize=10, leading=14, textColor=text_color)
+            sub_title_style = ParagraphStyle('RFQSubTitle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=12, textColor=primary_color, spaceBefore=12, spaceAfter=8)
+            small_style = ParagraphStyle('RFQSmall', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor("#64748B"))
+
+            def p(value):
+                return Paragraph(escape(str(value or "N/A")).replace("\n", "<br/>"), body_style)
+
+            def draw_page(canvas, pdf_doc):
+                width, height = letter
+                canvas.saveState()
+                canvas.setFillColor(primary_color)
+                canvas.rect(0, height - 44, width, 44, stroke=0, fill=1)
+                canvas.setFillColor(colors.white)
+                canvas.setFont("Helvetica-Bold", 13)
+                canvas.drawString(40, height - 28, buyer["name"])
+                canvas.setFont("Helvetica", 8)
+                canvas.drawRightString(width - 40, height - 20, f"{rfq_number} | Draft")
+                canvas.drawRightString(width - 40, height - 32, today.strftime("%d %b %Y"))
+                canvas.setFillColor(colors.HexColor("#E2E8F0"))
+                canvas.setFont("Helvetica-Bold", 46)
+                canvas.translate(width / 2, height / 2)
+                canvas.rotate(32)
+                canvas.drawCentredString(0, 0, "DRAFT RFQ")
+                canvas.restoreState()
+                canvas.saveState()
+                canvas.setStrokeColor(border_color)
+                canvas.line(40, 34, width - 40, 34)
+                canvas.setFillColor(colors.HexColor("#64748B"))
+                canvas.setFont("Helvetica", 8)
+                canvas.drawString(40, 22, "Generated by ProcureAI Enterprise sourcing workflow")
+                canvas.drawRightString(width - 40, 22, f"Page {pdf_doc.page}")
+                canvas.restoreState()
+
+            story.append(Paragraph("REQUEST FOR QUOTATION", title_style))
+            story.append(Paragraph("Formal supplier quotation request", small_style))
+            story.append(Spacer(1, 15))
+            meta_table = Table([[
+                Paragraph(f"<b>Buyer</b><br/>{escape(buyer['name'])}<br/>{escape(buyer['address'])}<br/>{escape(buyer['email'])}", body_style),
+                Paragraph(f"<b>Document No.</b><br/>{rfq_number}<br/><br/><b>Status</b><br/>Draft<br/><br/><b>Generated</b><br/>{today.strftime('%d %b %Y')}", body_style),
+            ]], colWidths=[330, 190])
+            meta_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), soft_fill),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('PADDING', (0,0), (-1,-1), 10),
+            ]))
+            story.append(meta_table)
+            story.append(Spacer(1, 16))
+
+            terms_table = Table([
+                [Paragraph("<b>Sourcing Category</b>", body_style), p(prod_name)],
+                [Paragraph("<b>Target Order Volume</b>", body_style), p(f"{qty} pieces")],
+                [Paragraph("<b>Required Price Terms</b>", body_style), p(terms)],
+                [Paragraph("<b>Target Delivery Time</b>", body_style), p(lead_time)],
+                [Paragraph("<b>Required Payment Terms</b>", body_style), p(payments)]
+            ], colWidths=[170, 350])
+            terms_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (0,-1), colors.HexColor("#ECFDF5")),
+                ('TEXTCOLOR', (0,0), (-1,-1), text_color),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                ('TOPPADDING', (0,0), (-1,-1), 8),
+                ('INNERGRID', (0,0), (-1,-1), 0.35, border_color),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+            ]))
+            story.append(terms_table)
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("Technical Product Specifications", sub_title_style))
+            story.append(p(specs))
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("Supplier Response Checklist", sub_title_style))
+            checklist_table = Table([[p(cell) for cell in row] for row in [
+                ["Unit price", "MOQ", "Packing / carton details"],
+                ["Carton dimensions / CBM", "Production lead time", "Validity date"],
+                ["Payment terms", "Incoterms / port", "Compliance certificates"],
+            ]], colWidths=[173, 173, 174])
+            checklist_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), soft_fill),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+                ('INNERGRID', (0,0), (-1,-1), 0.35, border_color),
+                ('PADDING', (0,0), (-1,-1), 8),
+            ]))
+            story.append(checklist_table)
+            story.append(Spacer(1, 18))
+            story.append(Paragraph("Submission Instructions", sub_title_style))
+            story.append(Paragraph("Please submit a formal quotation matching or improving the above terms. Responses should be valid for supplier evaluation, landed cost comparison, compliance review, and purchase approval.", body_style))
+            story.append(Spacer(1, 28))
+            approval_table = Table([[
+                Paragraph("<b>Prepared By</b><br/><br/>____________________________", body_style),
+                Paragraph("<b>Approved By</b><br/><br/>____________________________", body_style),
+            ]], colWidths=[260, 260])
+            approval_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('PADDING', (0,0), (-1,-1), 0)]))
+            story.append(approval_table)
+
+            doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+            self.rfq_preview_box.configure(state="normal")
+            self.rfq_preview_box.delete("1.0", tk.END)
+            self.rfq_preview_box.insert("1.0", f"RFQ PDF generated successfully.\nDocument: {rfq_number}\nStatus: Draft\nSaved to: {file_path}\n\nSourcing Target Summary\nProduct: {prod_name}\nQuantity: {qty}\nPrice Terms: {terms}\nLead Time: {lead_time}\nPayment Terms: {payments}\n\nSpecifications Draft\n{specs}")
+            self.rfq_preview_box.configure(state="disabled")
+            rfq_id = self.save_rfq_record("Draft", file_path)
+            self.log_workflow_audit("RFQ", rfq_id, "PDF Generated", "Draft", file_path)
+            messagebox.showinfo("Success", f"RFQ PDF saved successfully at:\n{file_path}!")
+            return
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate RFQ PDF: {e}")
             return
             
         try:
@@ -10534,12 +10691,15 @@ Sourcing Action Guidance:
             
         unit_price = getattr(self, 'po_active_price', 0.0)
         total_cost = qty * unit_price
+        import datetime
+        today_text = datetime.date.today().isoformat()
+        total_dual = self.format_usd_aed_total(total_cost)
 
         preview_text = f"""==================================================
                  PURCHASE ORDER (DRAFT)
 ==================================================
 PO NUMBER: {po_num}
-DATE: 2026-08-04
+DATE: {today_text}
 BUYER: ProcureAI Hub Corp
 DELIVERY ADDRESS: {address}
 
@@ -10552,7 +10712,7 @@ DELIVERY TERMS: {self.po_active_quote.get("term") if self.po_active_quote else "
 PAYMENT TERMS: {payment}
 
 --------------------------------------------------
-TOTAL ORDER VALUE: ${total_cost:,.2f}
+TOTAL ORDER VALUE: {total_dual}
 ==================================================
 Authorized Signature: ___________________________
 """
@@ -10606,6 +10766,145 @@ Authorized Signature: ___________________________
 
         file_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")], initialfile=f"PO_{po_num}.pdf")
         if not file_path:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib import colors
+            from xml.sax.saxutils import escape
+            import datetime
+
+            today = datetime.date.today()
+            buyer = self.get_buyer_profile()
+            quote = getattr(self, "po_active_quote", None) or {}
+            delivery_terms = quote.get("term") or "FOB"
+            total_dual = self.format_usd_aed_total(total_cost)
+            doc = SimpleDocTemplate(file_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=70, bottomMargin=44)
+            story = []
+            styles = getSampleStyleSheet()
+
+            primary_color = colors.HexColor("#0F766E")
+            accent_color = colors.HexColor("#1D4ED8")
+            border_color = colors.HexColor("#CBD5E1")
+            soft_fill = colors.HexColor("#F8FAFC")
+            text_color = colors.HexColor("#0F172A")
+
+            title_style = ParagraphStyle('POTitlePremium', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=24, textColor=primary_color, spaceAfter=4)
+            body_style = ParagraphStyle('POBodyPremium', parent=styles['Normal'], fontSize=10, leading=14, textColor=text_color)
+            header_style = ParagraphStyle('POHeaderPremium', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, textColor=colors.white)
+            cell_style = ParagraphStyle('POCellPremium', parent=styles['Normal'], fontSize=9, leading=12, textColor=text_color)
+            small_style = ParagraphStyle('POSmallPremium', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.HexColor("#64748B"))
+
+            def p(value, style=cell_style):
+                return Paragraph(escape(str(value or "N/A")).replace("\n", "<br/>"), style)
+
+            def draw_page(canvas, pdf_doc):
+                width, height = letter
+                canvas.saveState()
+                canvas.setFillColor(primary_color)
+                canvas.rect(0, height - 44, width, 44, stroke=0, fill=1)
+                canvas.setFillColor(colors.white)
+                canvas.setFont("Helvetica-Bold", 13)
+                canvas.drawString(40, height - 28, buyer["name"])
+                canvas.setFont("Helvetica", 8)
+                canvas.drawRightString(width - 40, height - 20, f"{po_num} | Issued")
+                canvas.drawRightString(width - 40, height - 32, today.strftime("%d %b %Y"))
+                canvas.setFillColor(colors.HexColor("#E2E8F0"))
+                canvas.setFont("Helvetica-Bold", 48)
+                canvas.translate(width / 2, height / 2)
+                canvas.rotate(32)
+                canvas.drawCentredString(0, 0, "ISSUED PO")
+                canvas.restoreState()
+                canvas.saveState()
+                canvas.setStrokeColor(border_color)
+                canvas.line(40, 34, width - 40, 34)
+                canvas.setFillColor(colors.HexColor("#64748B"))
+                canvas.setFont("Helvetica", 8)
+                canvas.drawString(40, 22, "Generated by ProcureAI Enterprise approval workflow")
+                canvas.drawRightString(width - 40, 22, f"Page {pdf_doc.page}")
+                canvas.restoreState()
+
+            story.append(Paragraph("PURCHASE ORDER", title_style))
+            story.append(Paragraph("Supplier issue document", small_style))
+            story.append(Spacer(1, 15))
+
+            meta_table = Table([[
+                Paragraph(f"<b>Buyer</b><br/>{escape(buyer['name'])}<br/>{escape(address or buyer['address'])}<br/>{escape(buyer['email'])}", body_style),
+                Paragraph(f"<b>PO Number</b><br/>{escape(po_num)}<br/><br/><b>Status</b><br/>Issued<br/><br/><b>Date</b><br/>{today.strftime('%d %b %Y')}", body_style),
+            ]], colWidths=[330, 190])
+            meta_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), soft_fill),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('PADDING', (0,0), (-1,-1), 10),
+            ]))
+            story.append(meta_table)
+            story.append(Spacer(1, 16))
+
+            supplier_table = Table([[
+                Paragraph("<b>Supplier</b>", body_style),
+                p(supplier, body_style),
+                Paragraph("<b>Payment Terms</b>", body_style),
+                p(payment, body_style),
+            ], [
+                Paragraph("<b>Delivery Terms</b>", body_style),
+                p(delivery_terms, body_style),
+                Paragraph("<b>Source Quote ID</b>", body_style),
+                p(quote.get("id") or "N/A", body_style),
+            ]], colWidths=[105, 175, 105, 135])
+            supplier_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (0,-1), colors.HexColor("#ECFDF5")),
+                ('BACKGROUND', (2,0), (2,-1), colors.HexColor("#ECFDF5")),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+                ('INNERGRID', (0,0), (-1,-1), 0.35, border_color),
+                ('PADDING', (0,0), (-1,-1), 8),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ]))
+            story.append(supplier_table)
+            story.append(Spacer(1, 18))
+
+            item_table = Table([
+                [p("Item Description", header_style), p("Quantity", header_style), p("Unit Price", header_style), p("Total", header_style)],
+                [p(product), p(f"{qty:,} pcs"), p(f"USD ${unit_price:.5f}"), p(total_dual)],
+            ], colWidths=[210, 90, 100, 120])
+            item_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), accent_color),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+                ('INNERGRID', (0,0), (-1,-1), 0.35, border_color),
+                ('PADDING', (0,0), (-1,-1), 8),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ]))
+            story.append(item_table)
+            story.append(Spacer(1, 20))
+
+            terms_table = Table([[
+                Paragraph("<b>Commercial Notes</b><br/>This PO is issued against an approved supplier quote. Any changes to unit price, packing, payment terms, delivery terms, or lead time require buyer confirmation before production.", body_style)
+            ]], colWidths=[520])
+            terms_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), soft_fill),
+                ('BOX', (0,0), (-1,-1), 0.8, border_color),
+                ('PADDING', (0,0), (-1,-1), 10),
+            ]))
+            story.append(terms_table)
+            story.append(Spacer(1, 36))
+
+            sig_table = Table([[
+                Paragraph("<b>Prepared By</b><br/><br/>____________________________", body_style),
+                Paragraph("<b>Supplier Acceptance</b><br/><br/>____________________________", body_style),
+            ]], colWidths=[260, 260])
+            sig_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('PADDING', (0,0), (-1,-1), 0)]))
+            story.append(sig_table)
+
+            doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
+            po_id = self.save_po_record("Issued", file_path)
+            self.log_workflow_audit("PO", po_id, "PDF Generated", "Issued", file_path)
+            self.update_po_preview()
+            messagebox.showinfo("Success", f"Purchase Order PDF saved successfully at:\n{file_path}!")
+            return
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate PO PDF: {e}")
             return
 
         try:
