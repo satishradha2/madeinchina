@@ -308,6 +308,23 @@ def init_db():
         )
     """)
     c.execute("""
+        CREATE TABLE IF NOT EXISTS communication_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workflow_type TEXT,
+            workflow_id INTEGER,
+            supplier_name TEXT,
+            recipient_email TEXT,
+            subject TEXT,
+            channel TEXT DEFAULT 'Email',
+            attachment_path TEXT,
+            status TEXT DEFAULT 'Drafted',
+            body_preview TEXT,
+            follow_up_due TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
         CREATE TABLE IF NOT EXISTS exception_register (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             exception_type TEXT,
@@ -4212,6 +4229,61 @@ class App(ctk.CTk):
         conn.close()
         if hasattr(self, "dashboard_cards"):
             self.update_dashboard_page()
+
+    def log_communication_event(self, workflow_type, workflow_id, supplier_name, recipient_email, subject, body="", attachment_path="", status="Drafted"):
+        import datetime
+        follow_up_due = (datetime.date.today() + datetime.timedelta(days=3)).isoformat() if status in {"Drafted", "Opened"} else ""
+        body_preview = (body or "").strip().replace("\r", " ").replace("\n", " ")
+        if len(body_preview) > 500:
+            body_preview = body_preview[:497] + "..."
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO communication_log (
+                workflow_type, workflow_id, supplier_name, recipient_email, subject,
+                channel, attachment_path, status, body_preview, follow_up_due
+            )
+            VALUES (?, ?, ?, ?, ?, 'Email', ?, ?, ?, ?)
+        """, (
+            workflow_type,
+            workflow_id or 0,
+            supplier_name or "",
+            recipient_email or "",
+            subject or "",
+            attachment_path or "",
+            status,
+            body_preview,
+            follow_up_due,
+        ))
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            workflow_type,
+            workflow_id or 0,
+            "Email " + status,
+            status,
+            f"{recipient_email or 'No recipient'} | {subject or 'No subject'}"
+        ))
+        conn.commit()
+        conn.close()
+        if workflow_type == "RFQ" and hasattr(self, "rfq_register_tree"):
+            self.load_rfq_register()
+        if workflow_type == "PO" and hasattr(self, "po_register_tree"):
+            self.load_po_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
+
+    def get_latest_register_pdf_path(self, workflow_type, workflow_id):
+        if not workflow_id:
+            return ""
+        table = "rfq_register" if workflow_type == "RFQ" else "po_register"
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"SELECT COALESCE(pdf_path, '') FROM {table} WHERE id=?", (workflow_id,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else ""
 
     def create_exception_request(self, exception_type, workflow_type, workflow_ref, reason, justification="", quote=None, supplier_name="", product_name=""):
         quote = quote or {}
@@ -8167,8 +8239,9 @@ Approved By: ____________________
         ctk.CTkLabel(header, text="Saved sourcing requests with status, target quantity, terms, and generated document path.", font=ctk.CTkFont(size=12), text_color=self.THEME["muted"]).grid(row=1, column=0, sticky="w", pady=(3, 0))
         self.make_button(header, "Refresh", command=self.load_rfq_register, variant="secondary", width=90).grid(row=0, column=1, rowspan=2, padx=5)
         self.make_button(header, "Mark Sent", command=lambda: self.update_selected_rfq_status("Sent"), variant="primary", width=90).grid(row=0, column=2, rowspan=2, padx=5)
-        self.make_button(header, "Close", command=lambda: self.update_selected_rfq_status("Closed"), variant="success", width=80).grid(row=0, column=3, rowspan=2, padx=5)
-        self.make_button(header, "Cancel", command=lambda: self.update_selected_rfq_status("Cancelled"), variant="danger", width=80).grid(row=0, column=4, rowspan=2, padx=5)
+        self.make_button(header, "Responded", command=lambda: self.update_selected_rfq_status("Responded"), variant="warning", width=95).grid(row=0, column=3, rowspan=2, padx=5)
+        self.make_button(header, "Close", command=lambda: self.update_selected_rfq_status("Closed"), variant="success", width=80).grid(row=0, column=4, rowspan=2, padx=5)
+        self.make_button(header, "Cancel", command=lambda: self.update_selected_rfq_status("Cancelled"), variant="danger", width=80).grid(row=0, column=5, rowspan=2, padx=5)
 
         frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
@@ -8265,6 +8338,25 @@ Approved By: ____________________
             return ["No audit events recorded yet."]
         return [f"{created_at} | {action} -> {status}\n{note}" for created_at, action, status, note in rows]
 
+    def get_communication_lines(self, workflow_type, workflow_id):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT created_at, supplier_name, recipient_email, subject, status, COALESCE(attachment_path, ''), COALESCE(follow_up_due, '')
+            FROM communication_log
+            WHERE workflow_type=? AND workflow_id=?
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 8
+        """, (workflow_type, workflow_id))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            return ["No communication events recorded yet."]
+        return [
+            f"{created_at} | {status} | {supplier or 'N/A'} <{email or 'no email'}>\nSubject: {subject or 'N/A'}\nAttachment: {attachment or 'None'}\nFollow-up Due: {follow_up or 'N/A'}"
+            for created_at, supplier, email, subject, status, attachment, follow_up in rows
+        ]
+
     def show_rfq_register_detail(self):
         rfq_id, _ = self.get_selected_register_id_and_path("RFQ")
         if not rfq_id:
@@ -8284,6 +8376,7 @@ Approved By: ____________________
             return
         rfq_number, product, qty, terms, lead, payment, suppliers, status, pdf_path, specs, created, updated = row
         audit = "\n\n".join(self.get_workflow_audit_lines("RFQ", rfq_id))
+        comms = "\n\n".join(self.get_communication_lines("RFQ", rfq_id))
         text = (
             f"RFQ: {rfq_number}\n"
             f"Status: {status}\n"
@@ -8297,6 +8390,7 @@ Approved By: ____________________
             f"Created: {created}\n"
             f"Updated: {updated}\n\n"
             f"Specifications:\n{specs or 'No specifications saved.'}\n\n"
+            f"Communication Log:\n{comms}\n\n"
             f"Workflow Audit:\n{audit}"
         )
         self.set_detail_text(self.rfq_detail_box, text)
@@ -8320,6 +8414,7 @@ Approved By: ____________________
             return
         po_number, supplier, product, qty, unit_cost, total_value, payment, address, status, pdf_path, quote_id, created, updated = row
         audit = "\n\n".join(self.get_workflow_audit_lines("PO", po_id))
+        comms = "\n\n".join(self.get_communication_lines("PO", po_id))
         unit_text = f"${float(unit_cost):.5f}" if unit_cost is not None else "N/A"
         total_text = f"${float(total_value):,.2f}" if total_value is not None else "N/A"
         text = (
@@ -8336,6 +8431,7 @@ Approved By: ____________________
             f"PDF Path: {pdf_path or 'Not generated'}\n"
             f"Created: {created}\n"
             f"Updated: {updated}\n\n"
+            f"Communication Log:\n{comms}\n\n"
             f"Workflow Audit:\n{audit}"
         )
         self.set_detail_text(self.po_detail_box, text)
@@ -9660,6 +9756,7 @@ Approved By: ____________________
         payment_term = self.rfq_payment_entry.get().strip() or "30/70"
         specs = self.rfq_specs_text.get("1.0", "end-1c").strip()
         rfq_id = self.save_rfq_record("Sent")
+        rfq_pdf_path = self.get_latest_register_pdf_path("RFQ", rfq_id) if rfq_id else getattr(self, "last_rfq_pdf_path", "")
         if rfq_id:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -9722,6 +9819,11 @@ Approved By: ____________________
                 outreach_body = self.generate_with_fallback([], ai_prompt, json_response=False)
             except Exception:
                 outreach_body = f"Dear {s} Sales Team,\n\nWe would like to request a quotation for {prod_name}. Details are as follows:\n- Quantity: {target_qty}\n- Specs: {specs}\n\nPlease let us know your best pricing and lead time.\n\nBest regards,\nProcurement Team"
+            if rfq_pdf_path:
+                outreach_body += f"\n\nAttachment reference: {rfq_pdf_path}"
+
+            subject = f"Request for Quote: {prod_name}"
+            self.log_communication_event("RFQ", rfq_id, s, sup_email, subject, outreach_body, rfq_pdf_path, "Drafted")
 
             txt = ctk.CTkTextbox(s_tab, height=300)
             txt.grid(row=1, column=0, padx=10, pady=5, sticky="nsew")
@@ -9730,8 +9832,8 @@ Approved By: ____________________
             ctrl_fr = ctk.CTkFrame(s_tab, fg_color="transparent")
             ctrl_fr.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
 
-            def make_launch_cmd(email=sup_email, body_txt_box=txt, s_name=s):
-                return lambda: self.launch_rfq_email_client(email, prod_name, body_txt_box.get("1.0", "end-1c").strip())
+            def make_launch_cmd(email=sup_email, body_txt_box=txt, s_name=s, doc_path=rfq_pdf_path, register_id=rfq_id):
+                return lambda: self.launch_rfq_email_client(email, prod_name, body_txt_box.get("1.0", "end-1c").strip(), s_name, register_id, doc_path)
 
             btn_launch = ctk.CTkButton(ctrl_fr, text="✉ Open in Mail Client", fg_color="#1f538d", hover_color="#153e6b", command=make_launch_cmd(sup_email, txt, s))
             btn_launch.pack(side="right", padx=5)
@@ -9739,12 +9841,15 @@ Approved By: ____________________
             btn_copy = ctk.CTkButton(ctrl_fr, text="📋 Copy Draft", command=lambda b=txt: self.copy_to_clipboard(b.get("1.0", "end-1c").strip()))
             btn_copy.pack(side="right", padx=5)
 
-    def launch_rfq_email_client(self, email, product, body):
+    def launch_rfq_email_client(self, email, product, body, supplier_name="", rfq_id=0, attachment_path=""):
         import urllib.parse
         import webbrowser
         subject = f"Request for Quote: {product}"
+        if attachment_path and attachment_path not in body:
+            body = body.rstrip() + f"\n\nAttachment reference: {attachment_path}"
         mail_url = f"mailto:{email}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
         webbrowser.open(mail_url)
+        self.log_communication_event("RFQ", rfq_id, supplier_name, email, subject, body, attachment_path, "Opened")
 
     def setup_uae_customs_tab(self):
         tab_uae = self.search_tabview.tab("🇦🇪 UAE Customs & HS Code")
@@ -11243,6 +11348,7 @@ Authorized Signature: ___________________________
         self.make_button(po_actions, "Open Folder", command=lambda: self.open_selected_register_folder("PO"), variant="secondary").grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=4)
         self.make_button(po_actions, "Copy Path", command=lambda: self.copy_selected_register_path("PO"), variant="secondary").grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=4)
         self.make_button(po_actions, "Load Generator", command=self.load_selected_po_into_generator, variant="success").grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=4)
+        self.make_button(po_actions, "Email PO", command=self.email_selected_po, variant="primary").grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
         self.load_po_register()
 
     def load_po_register(self):
@@ -11284,6 +11390,39 @@ Authorized Signature: ___________________________
         self.load_po_register()
         if hasattr(self, "dashboard_cards"):
             self.update_dashboard_page()
+
+    def email_selected_po(self):
+        if not hasattr(self, "po_register_tree"):
+            return
+        sel = self.po_register_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select PO", "Please select a PO record first.")
+            return
+        vals = self.po_register_tree.item(sel[0], "values")
+        po_id = int(vals[0])
+        po_num = vals[1]
+        supplier = vals[2]
+        product = vals[3]
+        pdf_path = vals[8] if len(vals) > 8 else ""
+        recipient = self.get_supplier_preferred_email(supplier)
+        if not recipient:
+            messagebox.showwarning("Missing Email", f"No verified email found for {supplier}. Add supplier email/contact info before sending PO.")
+            self.log_workflow_blocked_attempt("PO", "Email PO Blocked", f"Missing supplier email for {supplier}.", po_id)
+            return
+        import urllib.parse
+        import webbrowser
+        subject = f"Purchase Order {po_num}: {product}"
+        body = (
+            f"Dear {supplier} Team,\n\n"
+            f"Please find our issued purchase order {po_num} for {product}.\n\n"
+            "Kindly confirm acceptance, production schedule, packing details, and expected shipment date.\n\n"
+        )
+        if pdf_path:
+            body += f"Attachment reference: {pdf_path}\n\n"
+        body += "Best regards,\nProcurement Team"
+        mail_url = f"mailto:{recipient}?subject={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}"
+        webbrowser.open(mail_url)
+        self.log_communication_event("PO", po_id, supplier, recipient, subject, body, pdf_path, "Opened")
 
     def setup_price_history_tab(self):
         tab_history = self.sourcing_tabview.tab("📈 Price History")
