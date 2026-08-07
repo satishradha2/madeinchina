@@ -2027,24 +2027,62 @@ class App(ctk.CTk):
         messagebox.showinfo("RFQ Draft Ready", f"Loaded quote {quote_ids[0]} into the RFQ generator.")
 
     def on_closing(self):
+        if getattr(self, "_is_closing", False):
+            return
         self.is_extracting = False
         self.chat_is_extracting = False
         self._is_closing = True
         try:
-            for after_id in self.tk.call("after", "info"):
+            self.protocol("WM_DELETE_WINDOW", lambda: None)
+        except Exception:
+            pass
+        try:
+            after_ids = self.tk.splitlist(self.tk.call("after", "info"))
+            for after_id in after_ids:
                 try:
                     self.after_cancel(after_id)
                 except Exception:
                     pass
         except Exception:
             pass
+        for attr in (
+            "chart_display_frame",
+            "timeline_display_scroll",
+            "radar_canvas_frame",
+            "packing_canvas_frame",
+            "hedge_display_frame",
+            "hist_chart_frame",
+        ):
+            frame = getattr(self, attr, None)
+            if not frame:
+                continue
+            try:
+                for child in frame.winfo_children():
+                    try:
+                        child.destroy()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         try:
             import matplotlib.pyplot as plt
             plt.close("all")
         except Exception:
             pass
         try:
+            self.quit()
+        except Exception:
+            pass
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+        try:
             self.destroy()
+        except Exception:
+            pass
+        try:
+            self.tk.quit()
         except Exception:
             pass
 
