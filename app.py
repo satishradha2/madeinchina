@@ -6423,6 +6423,7 @@ class App(ctk.CTk):
     def setup_rfq_register_tab(self):
         tab = self.rfqs_tabview.tab("RFQ Register")
         tab.grid_columnconfigure(0, weight=1)
+        tab.grid_columnconfigure(1, weight=0, minsize=360)
         tab.grid_rowconfigure(1, weight=1)
 
         header = ctk.CTkFrame(tab, fg_color="transparent")
@@ -6436,7 +6437,7 @@ class App(ctk.CTk):
         self.make_button(header, "Cancel", command=lambda: self.update_selected_rfq_status("Cancelled"), variant="danger", width=80).grid(row=0, column=4, rowspan=2, padx=5)
 
         frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
-        frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=1)
 
@@ -6455,6 +6456,26 @@ class App(ctk.CTk):
             self.rfq_register_tree.heading(col, text=label)
             self.rfq_register_tree.column(col, width=width, anchor="w")
         self.rfq_register_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.rfq_register_tree.bind("<<TreeviewSelect>>", lambda event: self.show_rfq_register_detail())
+
+        detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
+        detail.grid_columnconfigure(0, weight=1)
+        detail.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(detail, text="RFQ Detail", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 8))
+        self.rfq_detail_box = ctk.CTkTextbox(detail, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.rfq_detail_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        self.rfq_detail_box.insert("1.0", "Select an RFQ row to view details, document path, and workflow audit trail.")
+        self.rfq_detail_box.configure(state="disabled")
+
+        rfq_actions = ctk.CTkFrame(detail, fg_color="transparent")
+        rfq_actions.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
+        rfq_actions.grid_columnconfigure(0, weight=1)
+        rfq_actions.grid_columnconfigure(1, weight=1)
+        self.make_button(rfq_actions, "Open PDF", command=lambda: self.open_selected_register_document("RFQ"), variant="primary").grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.make_button(rfq_actions, "Open Folder", command=lambda: self.open_selected_register_folder("RFQ"), variant="secondary").grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=4)
+        self.make_button(rfq_actions, "Copy Path", command=lambda: self.copy_selected_register_path("RFQ"), variant="secondary").grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.make_button(rfq_actions, "Load Generator", command=self.load_selected_rfq_into_generator, variant="success").grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=4)
         self.load_rfq_register()
 
     def load_rfq_register(self):
@@ -6471,6 +6492,223 @@ class App(ctk.CTk):
         for row in c.fetchall():
             self.rfq_register_tree.insert("", tk.END, values=row)
         conn.close()
+        if hasattr(self, "rfq_detail_box"):
+            self.set_detail_text(self.rfq_detail_box, "Select an RFQ row to view details, document path, and workflow audit trail.")
+
+    def set_detail_text(self, textbox, text):
+        textbox.configure(state="normal")
+        textbox.delete("1.0", tk.END)
+        textbox.insert("1.0", text)
+        textbox.configure(state="disabled")
+
+    def get_selected_register_id_and_path(self, register_type):
+        tree = self.rfq_register_tree if register_type == "RFQ" else self.po_register_tree
+        sel = tree.selection()
+        if not sel:
+            return None, ""
+        vals = tree.item(sel[0], "values")
+        if not vals:
+            return None, ""
+        try:
+            record_id = int(vals[0])
+        except Exception:
+            record_id = None
+        return record_id, vals[-1] if vals[-1] else ""
+
+    def get_workflow_audit_lines(self, workflow_type, workflow_id):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT created_at, action, status, COALESCE(note, '')
+            FROM workflow_audit_log
+            WHERE workflow_type=? AND workflow_id=?
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 12
+        """, (workflow_type, workflow_id))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            return ["No audit events recorded yet."]
+        return [f"{created_at} | {action} -> {status}\n{note}" for created_at, action, status, note in rows]
+
+    def show_rfq_register_detail(self):
+        rfq_id, _ = self.get_selected_register_id_and_path("RFQ")
+        if not rfq_id:
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT rfq_number, product_name, target_quantity, price_terms, lead_time,
+                   payment_terms, COALESCE(selected_suppliers, ''), status,
+                   COALESCE(pdf_path, ''), COALESCE(specs, ''), created_at, updated_at
+            FROM rfq_register
+            WHERE id=?
+        """, (rfq_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        rfq_number, product, qty, terms, lead, payment, suppliers, status, pdf_path, specs, created, updated = row
+        audit = "\n\n".join(self.get_workflow_audit_lines("RFQ", rfq_id))
+        text = (
+            f"RFQ: {rfq_number}\n"
+            f"Status: {status}\n"
+            f"Product: {product}\n"
+            f"Target Quantity: {qty}\n"
+            f"Price Terms: {terms}\n"
+            f"Lead Time: {lead}\n"
+            f"Payment Terms: {payment}\n"
+            f"Selected Suppliers: {suppliers or 'Not selected'}\n"
+            f"PDF Path: {pdf_path or 'Not generated'}\n"
+            f"Created: {created}\n"
+            f"Updated: {updated}\n\n"
+            f"Specifications:\n{specs or 'No specifications saved.'}\n\n"
+            f"Workflow Audit:\n{audit}"
+        )
+        self.set_detail_text(self.rfq_detail_box, text)
+
+    def show_po_register_detail(self):
+        po_id, _ = self.get_selected_register_id_and_path("PO")
+        if not po_id:
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT po_number, supplier_name, product_name, quantity, unit_cost, total_value,
+                   payment_terms, delivery_address, status, COALESCE(pdf_path, ''),
+                   quote_id, created_at, updated_at
+            FROM po_register
+            WHERE id=?
+        """, (po_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        po_number, supplier, product, qty, unit_cost, total_value, payment, address, status, pdf_path, quote_id, created, updated = row
+        audit = "\n\n".join(self.get_workflow_audit_lines("PO", po_id))
+        unit_text = f"${float(unit_cost):.5f}" if unit_cost is not None else "N/A"
+        total_text = f"${float(total_value):,.2f}" if total_value is not None else "N/A"
+        text = (
+            f"PO: {po_number}\n"
+            f"Status: {status}\n"
+            f"Supplier: {supplier}\n"
+            f"Product: {product}\n"
+            f"Quantity: {qty:,} pcs\n"
+            f"Unit Cost: {unit_text}\n"
+            f"Total Value: {total_text}\n"
+            f"Payment Terms: {payment}\n"
+            f"Delivery Address: {address}\n"
+            f"Related Quote ID: {quote_id or 'N/A'}\n"
+            f"PDF Path: {pdf_path or 'Not generated'}\n"
+            f"Created: {created}\n"
+            f"Updated: {updated}\n\n"
+            f"Workflow Audit:\n{audit}"
+        )
+        self.set_detail_text(self.po_detail_box, text)
+
+    def open_selected_register_document(self, register_type):
+        _, path = self.get_selected_register_id_and_path(register_type)
+        if not path:
+            messagebox.showwarning("No Document", f"No {register_type} PDF path is saved for the selected record.")
+            return
+        if not os.path.exists(path):
+            messagebox.showerror("File Missing", f"The saved document path does not exist:\n{path}")
+            return
+        os.startfile(path)
+
+    def open_selected_register_folder(self, register_type):
+        _, path = self.get_selected_register_id_and_path(register_type)
+        if not path:
+            messagebox.showwarning("No Document", f"No {register_type} PDF path is saved for the selected record.")
+            return
+        folder = os.path.dirname(path)
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror("Folder Missing", f"The saved document folder does not exist:\n{folder}")
+            return
+        os.startfile(folder)
+
+    def copy_selected_register_path(self, register_type):
+        _, path = self.get_selected_register_id_and_path(register_type)
+        if not path:
+            messagebox.showwarning("No Document", f"No {register_type} PDF path is saved for the selected record.")
+            return
+        self.copy_to_clipboard(path)
+
+    def set_tab_by_contains(self, tabview, text):
+        try:
+            names = list(getattr(tabview, "_name_list", []))
+            for name in names:
+                if text.lower() in str(name).lower():
+                    tabview.set(name)
+                    return
+        except Exception:
+            pass
+
+    def load_selected_rfq_into_generator(self):
+        rfq_id, _ = self.get_selected_register_id_and_path("RFQ")
+        if not rfq_id:
+            messagebox.showwarning("Select RFQ", "Please select an RFQ record first.")
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT product_name, target_quantity, price_terms, lead_time, payment_terms, specs
+            FROM rfq_register
+            WHERE id=?
+        """, (rfq_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        product, qty, terms, lead, payment, specs = row
+        self.show_page("RFQs Outreach")
+        self.set_tab_by_contains(self.rfqs_tabview, "RFQ Generator")
+        self.rfq_product_cb.set("Custom")
+        self.rfq_name_entry.delete(0, tk.END)
+        self.rfq_name_entry.insert(0, product or "")
+        self.rfq_qty_entry.delete(0, tk.END)
+        self.rfq_qty_entry.insert(0, qty or "")
+        self.rfq_term_cb.set(terms or "FOB Shanghai")
+        self.rfq_lead_entry.delete(0, tk.END)
+        self.rfq_lead_entry.insert(0, lead or "")
+        self.rfq_payment_entry.delete(0, tk.END)
+        self.rfq_payment_entry.insert(0, payment or "")
+        self.rfq_specs_text.delete("1.0", tk.END)
+        self.rfq_specs_text.insert("1.0", specs or "")
+
+    def load_selected_po_into_generator(self):
+        po_id, _ = self.get_selected_register_id_and_path("PO")
+        if not po_id:
+            messagebox.showwarning("Select PO", "Please select a PO record first.")
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT po_number, supplier_name, product_name, quantity, payment_terms,
+                   delivery_address, quote_id, unit_cost
+            FROM po_register
+            WHERE id=?
+        """, (po_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        po_number, supplier, product, qty, payment, address, quote_id, unit_cost = row
+        self.show_page("Logistics Costing")
+        self.set_tab_by_contains(self.logistics_tabview, "PO Generator")
+        self.po_supplier_cb.set(supplier or "Select Supplier")
+        self.po_product_cb.set(product or "Select Product")
+        self.po_number_entry.delete(0, tk.END)
+        self.po_number_entry.insert(0, po_number or "")
+        self.po_qty_entry.delete(0, tk.END)
+        self.po_qty_entry.insert(0, str(qty or ""))
+        self.po_payment_entry.delete(0, tk.END)
+        self.po_payment_entry.insert(0, payment or "")
+        self.po_address_entry.delete(0, tk.END)
+        self.po_address_entry.insert(0, address or "")
+        self.po_active_price = float(unit_cost or 0)
+        self.po_active_quote = next((r for r in self.extracted_data if r.get("id") == quote_id), {"id": quote_id, "review_status": "Approved"})
+        self.update_po_preview()
 
     def update_selected_rfq_status(self, status):
         sel = self.rfq_register_tree.selection()
@@ -8750,6 +8988,7 @@ Authorized Signature: ___________________________
     def setup_po_register_tab(self):
         tab = self.logistics_tabview.tab("PO Register")
         tab.grid_columnconfigure(0, weight=1)
+        tab.grid_columnconfigure(1, weight=0, minsize=360)
         tab.grid_rowconfigure(1, weight=1)
 
         header = ctk.CTkFrame(tab, fg_color="transparent")
@@ -8764,7 +9003,7 @@ Authorized Signature: ___________________________
         self.make_button(header, "Cancel", command=lambda: self.update_selected_po_status("Cancelled"), variant="danger", width=80).grid(row=0, column=5, rowspan=2, padx=5)
 
         frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
-        frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=1)
 
@@ -8784,6 +9023,26 @@ Authorized Signature: ___________________________
             self.po_register_tree.heading(col, text=label)
             self.po_register_tree.column(col, width=width, anchor="w")
         self.po_register_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.po_register_tree.bind("<<TreeviewSelect>>", lambda event: self.show_po_register_detail())
+
+        detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
+        detail.grid_columnconfigure(0, weight=1)
+        detail.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(detail, text="PO Detail", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 8))
+        self.po_detail_box = ctk.CTkTextbox(detail, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.po_detail_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        self.po_detail_box.insert("1.0", "Select a PO row to view supplier, value, document path, and workflow audit trail.")
+        self.po_detail_box.configure(state="disabled")
+
+        po_actions = ctk.CTkFrame(detail, fg_color="transparent")
+        po_actions.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
+        po_actions.grid_columnconfigure(0, weight=1)
+        po_actions.grid_columnconfigure(1, weight=1)
+        self.make_button(po_actions, "Open PDF", command=lambda: self.open_selected_register_document("PO"), variant="primary").grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.make_button(po_actions, "Open Folder", command=lambda: self.open_selected_register_folder("PO"), variant="secondary").grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=4)
+        self.make_button(po_actions, "Copy Path", command=lambda: self.copy_selected_register_path("PO"), variant="secondary").grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.make_button(po_actions, "Load Generator", command=self.load_selected_po_into_generator, variant="success").grid(row=1, column=1, sticky="ew", padx=(4, 0), pady=4)
         self.load_po_register()
 
     def load_po_register(self):
@@ -8803,6 +9062,8 @@ Authorized Signature: ___________________________
             row[6] = f"${float(row[6]):,.2f}" if row[6] is not None else "N/A"
             self.po_register_tree.insert("", tk.END, values=row)
         conn.close()
+        if hasattr(self, "po_detail_box"):
+            self.set_detail_text(self.po_detail_box, "Select a PO row to view supplier, value, document path, and workflow audit trail.")
 
     def update_selected_po_status(self, status):
         sel = self.po_register_tree.selection()
