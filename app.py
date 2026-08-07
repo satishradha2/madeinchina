@@ -4476,12 +4476,85 @@ class App(ctk.CTk):
             return
         issues, warnings = self.validate_rfq_ready()
         self.set_readiness_box(self.rfq_readiness_box, "RFQ Readiness", issues, warnings)
+        self.update_rfq_document_preview()
 
     def update_po_readiness_panel(self):
         if not hasattr(self, "po_readiness_box"):
             return
         issues, warnings = self.validate_po_ready()
         self.set_readiness_box(self.po_readiness_box, "PO Issuance Gate", issues, warnings)
+
+    def set_document_preview_text(self, box, text):
+        if not box:
+            return
+        box.configure(state="normal")
+        box.delete("1.0", tk.END)
+        box.insert("1.0", text)
+        box.configure(state="disabled")
+
+    def build_rfq_preview_text(self):
+        import datetime
+        prod_name = self.rfq_name_entry.get().strip() or self.rfq_product_cb.get().strip()
+        qty = self.rfq_qty_entry.get().strip()
+        terms = self.rfq_term_cb.get().strip()
+        lead_time = self.rfq_lead_entry.get().strip()
+        payments = self.rfq_payment_entry.get().strip()
+        specs = self.rfq_specs_text.get("1.0", tk.END).strip()
+        today = datetime.date.today()
+        doc_no = f"RFQ-{today.strftime('%Y%m%d')}-{(prod_name or 'PROD')[:4].upper()}"
+        return f"""REQUEST FOR QUOTATION
+Status: Draft
+Document No: {doc_no}
+Date: {today.isoformat()}
+Buyer: ProcureAI Hub Corp
+
+SOURCING REQUIREMENTS
+Product: {prod_name or 'Product required'}
+Target Quantity: {qty or 'Quantity required'} pcs
+Price Terms: {terms or 'Required'}
+Target Lead Time: {lead_time or 'Required'}
+Payment Terms: {payments or 'Required'}
+
+TECHNICAL SPECIFICATIONS
+{specs or 'Add material, size, packing, quality, and compliance requirements.'}
+
+SUPPLIER RESPONSE CHECKLIST
+- Unit price, MOQ, and validity date
+- Carton packing, carton dimensions, and CBM
+- Production lead time and delivery terms
+- Compliance certificates and country of origin
+
+APPROVAL
+Prepared By: ____________________
+Approved By: ____________________
+"""
+
+    def update_rfq_document_preview(self):
+        if hasattr(self, "rfq_preview_box"):
+            self.set_document_preview_text(self.rfq_preview_box, self.build_rfq_preview_text())
+
+    def open_last_generated_document(self, workflow_type):
+        path = getattr(self, f"last_{workflow_type.lower()}_pdf_path", "")
+        if not path:
+            messagebox.showwarning("No Document", f"No {workflow_type} PDF has been generated in this session yet.")
+            return
+        if not os.path.exists(path):
+            messagebox.showerror("File Missing", f"The generated document no longer exists:\n{path}")
+            return
+        os.startfile(path)
+        self.log_workflow_audit(workflow_type, 0, "Generated Document Opened", "Opened", path)
+
+    def open_last_generated_folder(self, workflow_type):
+        path = getattr(self, f"last_{workflow_type.lower()}_pdf_path", "")
+        if not path:
+            messagebox.showwarning("No Document", f"No {workflow_type} PDF has been generated in this session yet.")
+            return
+        folder = os.path.dirname(path)
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror("Folder Missing", f"The generated document folder does not exist:\n{folder}")
+            return
+        os.startfile(folder)
+        self.log_workflow_audit(workflow_type, 0, "Generated Folder Opened", "Opened", folder)
 
     def start_contact_extraction_thread(self):
         if not self.api_key:
@@ -8049,11 +8122,11 @@ class App(ctk.CTk):
         right_frame.grid_columnconfigure(0, weight=1)
         right_frame.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(right_frame, text="📋 RFQ PDF Action Controls", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
+        ctk.CTkLabel(right_frame, text="RFQ Document Preview", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=15, pady=10, sticky="w")
 
         self.rfq_preview_box = ctk.CTkTextbox(right_frame, height=280, font=("Consolas", 10))
         self.rfq_preview_box.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
-        self.rfq_preview_box.insert("1.0", "Fill out the fields on the left and click 'Generate PDF RFQ' to compile your sourcing document.")
+        self.rfq_preview_box.insert("1.0", "Fill out the fields on the left to preview the RFQ document.")
         self.rfq_preview_box.configure(state="disabled")
 
         self.rfq_readiness_box = ctk.CTkTextbox(right_frame, height=110, wrap="word")
@@ -8063,8 +8136,16 @@ class App(ctk.CTk):
         action_fr = ctk.CTkFrame(right_frame, fg_color="transparent")
         action_fr.grid(row=3, column=0, padx=15, pady=15, sticky="ew")
 
-        self.btn_gen_rfq_pdf = ctk.CTkButton(action_fr, text="📝 Generate PDF RFQ", fg_color="#1f538d", hover_color="#153e6b", command=self.generate_rfq_pdf)
+        self.btn_gen_rfq_pdf = ctk.CTkButton(action_fr, text="Generate PDF RFQ", fg_color="#1f538d", hover_color="#153e6b", command=self.generate_rfq_pdf)
         self.btn_gen_rfq_pdf.pack(side="right", padx=5)
+
+        self.btn_open_last_rfq_pdf = self.make_button(action_fr, "Open PDF", command=lambda: self.open_last_generated_document("RFQ"), variant="secondary", width=90)
+        self.btn_open_last_rfq_pdf.pack(side="right", padx=5)
+        self.btn_open_last_rfq_pdf.configure(state="disabled")
+
+        self.btn_open_last_rfq_folder = self.make_button(action_fr, "Open Folder", command=lambda: self.open_last_generated_folder("RFQ"), variant="secondary", width=105)
+        self.btn_open_last_rfq_folder.pack(side="right", padx=5)
+        self.btn_open_last_rfq_folder.configure(state="disabled")
 
         self.btn_broadcast_rfq = ctk.CTkButton(action_fr, text="📡 Broadcast RFQ", fg_color="#6e4513", hover_color="#52320b", command=self.open_rfq_broadcast_popup)
         self.btn_broadcast_rfq.pack(side="left", padx=5)
@@ -8670,7 +8751,14 @@ class App(ctk.CTk):
             self.rfq_preview_box.insert("1.0", f"RFQ PDF generated successfully.\nDocument: {rfq_number}\nStatus: Draft\nSaved to: {file_path}\n\nSourcing Target Summary\nProduct: {prod_name}\nQuantity: {qty}\nPrice Terms: {terms}\nLead Time: {lead_time}\nPayment Terms: {payments}\n\nSpecifications Draft\n{specs}")
             self.rfq_preview_box.configure(state="disabled")
             rfq_id = self.save_rfq_record("Draft", file_path)
-            self.log_workflow_audit("RFQ", rfq_id, "PDF Generated", "Draft", file_path)
+            rfq_action = "PDF Regenerated" if getattr(self, "last_rfq_pdf_path", "") else "PDF Generated"
+            self.log_workflow_audit("RFQ", rfq_id, rfq_action, "Draft", file_path)
+            self.last_rfq_pdf_path = file_path
+            self.btn_gen_rfq_pdf.configure(text="Regenerate PDF")
+            if hasattr(self, "btn_open_last_rfq_pdf"):
+                self.btn_open_last_rfq_pdf.configure(state="normal")
+            if hasattr(self, "btn_open_last_rfq_folder"):
+                self.btn_open_last_rfq_folder.configure(state="normal")
             messagebox.showinfo("Success", f"RFQ PDF saved successfully at:\n{file_path}!")
             return
         except Exception as e:
@@ -10601,8 +10689,19 @@ Sourcing Action Guidance:
         self.po_cost_lbl.grid(row=7, column=1, padx=15, pady=2, sticky="w")
 
         # Generate & Export Buttons
-        self.btn_gen_po = ctk.CTkButton(left_frame, text="📄 Generate PO PDF Document", command=self.export_po_pdf, fg_color="#1f7d44", hover_color="#15592e")
-        self.btn_gen_po.grid(row=8, column=0, columnspan=2, padx=15, pady=20, sticky="ew")
+        po_action_fr = ctk.CTkFrame(left_frame, fg_color="transparent")
+        po_action_fr.grid(row=8, column=0, columnspan=2, padx=15, pady=20, sticky="ew")
+        po_action_fr.grid_columnconfigure(0, weight=1)
+        po_action_fr.grid_columnconfigure(1, weight=0)
+        po_action_fr.grid_columnconfigure(2, weight=0)
+        self.btn_gen_po = ctk.CTkButton(po_action_fr, text="Generate PO PDF", command=self.export_po_pdf, fg_color="#1f7d44", hover_color="#15592e")
+        self.btn_gen_po.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.btn_open_last_po_pdf = self.make_button(po_action_fr, "Open PDF", command=lambda: self.open_last_generated_document("PO"), variant="secondary", width=90)
+        self.btn_open_last_po_pdf.grid(row=0, column=1, sticky="ew", padx=4)
+        self.btn_open_last_po_pdf.configure(state="disabled")
+        self.btn_open_last_po_folder = self.make_button(po_action_fr, "Open Folder", command=lambda: self.open_last_generated_folder("PO"), variant="secondary", width=105)
+        self.btn_open_last_po_folder.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        self.btn_open_last_po_folder.configure(state="disabled")
 
         # --- RIGHT PANEL: Live PO Preview text ---
         right_frame = ctk.CTkFrame(tab_po)
@@ -10610,7 +10709,7 @@ Sourcing Action Guidance:
         right_frame.grid_columnconfigure(0, weight=1)
         right_frame.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(right_frame, text="📄 Live PO Document Draft", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, pady=10, padx=15, sticky="w")
+        ctk.CTkLabel(right_frame, text="PO Document Preview", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, pady=10, padx=15, sticky="w")
 
         self.po_preview_box = ctk.CTkTextbox(right_frame, wrap="word")
         self.po_preview_box.grid(row=1, column=0, sticky="nsew", padx=15, pady=(0, 8))
@@ -10899,7 +10998,14 @@ Authorized Signature: ___________________________
 
             doc.build(story, onFirstPage=draw_page, onLaterPages=draw_page)
             po_id = self.save_po_record("Issued", file_path)
-            self.log_workflow_audit("PO", po_id, "PDF Generated", "Issued", file_path)
+            po_action = "PDF Regenerated" if getattr(self, "last_po_pdf_path", "") else "PDF Generated"
+            self.log_workflow_audit("PO", po_id, po_action, "Issued", file_path)
+            self.last_po_pdf_path = file_path
+            self.btn_gen_po.configure(text="Regenerate PO PDF")
+            if hasattr(self, "btn_open_last_po_pdf"):
+                self.btn_open_last_po_pdf.configure(state="normal")
+            if hasattr(self, "btn_open_last_po_folder"):
+                self.btn_open_last_po_folder.configure(state="normal")
             self.update_po_preview()
             messagebox.showinfo("Success", f"Purchase Order PDF saved successfully at:\n{file_path}!")
             return
