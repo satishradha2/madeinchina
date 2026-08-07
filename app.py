@@ -1118,6 +1118,7 @@ class App(ctk.CTk):
         tab_neg = self.rfqs_tabview.add("💬 AI Negotiation")
 
         tab_rfq_register = self.rfqs_tabview.add("RFQ Register")
+        tab_followups = self.rfqs_tabview.add("Follow-ups")
 
         # ---------------------------------------------
         # 5. Workspace: Customs & AI Search
@@ -1383,6 +1384,7 @@ class App(ctk.CTk):
         # Setup RFQ Generator tab
         self.setup_rfq_generator_tab()
         self.setup_rfq_register_tab()
+        self.setup_followups_tab()
 
         # Setup Profit Simulator tab
         self.setup_profit_simulator_tab()
@@ -1505,7 +1507,10 @@ class App(ctk.CTk):
             ("open_exceptions", "Open Exceptions", "0"),
             ("expiring_docs", "Doc Expiry", "0"),
             ("rfq_open", "Open RFQs", "0"),
+            ("followups_due", "Follow-ups Due", "0"),
+            ("overdue_rfq", "Overdue RFQs", "0"),
             ("po_open", "Open POs", "0"),
+            ("po_awaiting_acceptance", "POs Awaiting Acceptance", "0"),
             ("po_value", "Open PO Value", "$0"),
             ("approved", "Approved Quotes", "0"),
             ("expired", "Expired Quotes", "0"),
@@ -1643,7 +1648,10 @@ class App(ctk.CTk):
         self.dashboard_cards["expired"].configure(text=str(expired_count), text_color=self.THEME["danger"] if expired_count else self.THEME["text"])
         self.dashboard_cards["high_risk"].configure(text=str(len(high_risk)), text_color=self.THEME["danger"] if high_risk else self.THEME["text"])
         self.dashboard_cards["rfq_open"].configure(text=str(workflow["open_rfqs"]), text_color=self.THEME["primary"] if workflow["open_rfqs"] else self.THEME["text"])
+        self.dashboard_cards["followups_due"].configure(text=str(workflow["followups_due"]), text_color=self.THEME["warning"] if workflow["followups_due"] else self.THEME["text"])
+        self.dashboard_cards["overdue_rfq"].configure(text=str(workflow["overdue_rfqs"]), text_color=self.THEME["danger"] if workflow["overdue_rfqs"] else self.THEME["text"])
         self.dashboard_cards["po_open"].configure(text=str(workflow["open_pos"]), text_color=self.THEME["primary"] if workflow["open_pos"] else self.THEME["text"])
+        self.dashboard_cards["po_awaiting_acceptance"].configure(text=str(workflow["po_awaiting_acceptance"]), text_color=self.THEME["warning"] if workflow["po_awaiting_acceptance"] else self.THEME["text"])
         self.dashboard_cards["po_value"].configure(text=f"${workflow['open_po_value']:,.0f}", text_color=self.THEME["success"] if workflow["open_po_value"] else self.THEME["text"])
 
         self.dashboard_approval_tree.delete(*self.dashboard_approval_tree.get_children())
@@ -1689,8 +1697,14 @@ class App(ctk.CTk):
             actions.append(f"Use {best_supplier} as the first benchmark in negotiations based on lowest unit price.")
         if workflow["open_rfqs"]:
             actions.append(f"Follow up on {workflow['open_rfqs']} open RFQ record(s) until they are closed or cancelled.")
+        if workflow["followups_due"]:
+            actions.append(f"Send follow-up emails for {workflow['followups_due']} due supplier communication(s).")
+        if workflow["overdue_rfqs"]:
+            actions.append(f"Escalate {workflow['overdue_rfqs']} RFQ(s) still waiting after the standard response window.")
         if workflow["open_pos"]:
             actions.append(f"Track {workflow['open_pos']} active PO record(s) through supplier acceptance, shipment, and closure.")
+        if workflow["po_awaiting_acceptance"]:
+            actions.append(f"Chase supplier acceptance for {workflow['po_awaiting_acceptance']} issued PO(s).")
         if not actions:
             actions.append("No urgent governance actions. Continue monitoring RFQ and PO cycle progress.")
 
@@ -1715,7 +1729,10 @@ class App(ctk.CTk):
             "open_exceptions": ("Settings Directory", self.settings_tabview, "Exception Register", "exceptions"),
             "expiring_docs": ("Settings Directory", self.settings_tabview, "Master Data", "doc_expiry"),
             "rfq_open": ("RFQs Outreach", self.rfqs_tabview, "RFQ Register", "rfq_open"),
+            "followups_due": ("RFQs Outreach", self.rfqs_tabview, "Follow-ups", "followups_due"),
+            "overdue_rfq": ("RFQs Outreach", self.rfqs_tabview, "Follow-ups", "overdue_rfq"),
             "po_open": ("Logistics Costing", self.logistics_tabview, "PO Register", "po_open"),
+            "po_awaiting_acceptance": ("Logistics Costing", self.logistics_tabview, "PO Register", "po_awaiting_acceptance"),
             "po_value": ("Logistics Costing", self.logistics_tabview, "PO Register", "po_open"),
             "expired": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "expired"),
             "high_risk": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "high_risk"),
@@ -1738,8 +1755,13 @@ class App(ctk.CTk):
             self.focus_first_tree_row(getattr(self, "exception_tree", None), status_index=5, preferred_status="Requested")
         elif focus_key == "rfq_open":
             self.focus_first_tree_row(getattr(self, "rfq_register_tree", None), status_index=6, exclude_statuses={"Closed", "Cancelled"})
+        elif focus_key in {"followups_due", "overdue_rfq"}:
+            self.load_followups(filter_key=focus_key)
+            self.focus_first_tree_row(getattr(self, "followups_tree", None))
         elif focus_key == "po_open":
             self.focus_first_tree_row(getattr(self, "po_register_tree", None), status_index=7, exclude_statuses={"Closed", "Cancelled"})
+        elif focus_key == "po_awaiting_acceptance":
+            self.focus_first_tree_row(getattr(self, "po_register_tree", None), status_index=7, preferred_status="Issued")
 
     def focus_first_tree_row(self, tree, status_index=None, preferred_status=None, exclude_statuses=None):
         if not tree:
@@ -1841,7 +1863,15 @@ class App(ctk.CTk):
             self.load_supplier_documents_for_selection()
 
     def get_workflow_dashboard_snapshot(self):
-        snapshot = {"open_rfqs": 0, "open_pos": 0, "open_po_value": 0.0, "timeline": []}
+        snapshot = {
+            "open_rfqs": 0,
+            "open_pos": 0,
+            "open_po_value": 0.0,
+            "followups_due": 0,
+            "overdue_rfqs": 0,
+            "po_awaiting_acceptance": 0,
+            "timeline": [],
+        }
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -1851,6 +1881,23 @@ class App(ctk.CTk):
             po_count, po_value = c.fetchone()
             snapshot["open_pos"] = po_count or 0
             snapshot["open_po_value"] = float(po_value or 0)
+            c.execute("""
+                SELECT COUNT(*)
+                FROM communication_log
+                WHERE status IN ('Drafted', 'Opened', 'Sent Manually', 'Follow-up Sent')
+                  AND COALESCE(follow_up_due, '') <= date('now')
+                  AND COALESCE(follow_up_due, '') <> ''
+            """)
+            snapshot["followups_due"] = c.fetchone()[0] or 0
+            c.execute("""
+                SELECT COUNT(*)
+                FROM rfq_register
+                WHERE status IN ('Sent')
+                  AND updated_at < datetime('now', '-3 days')
+            """)
+            snapshot["overdue_rfqs"] = c.fetchone()[0] or 0
+            c.execute("SELECT COUNT(*) FROM po_register WHERE status='Issued'")
+            snapshot["po_awaiting_acceptance"] = c.fetchone()[0] or 0
 
             events = []
             c.execute("""
@@ -4271,6 +4318,8 @@ class App(ctk.CTk):
             self.load_rfq_register()
         if workflow_type == "PO" and hasattr(self, "po_register_tree"):
             self.load_po_register()
+        if hasattr(self, "followups_tree"):
+            self.load_followups()
         if hasattr(self, "dashboard_cards"):
             self.update_dashboard_page()
 
@@ -8301,6 +8350,280 @@ Approved By: ____________________
         conn.close()
         if hasattr(self, "rfq_detail_box"):
             self.set_detail_text(self.rfq_detail_box, "Select an RFQ row to view details, document path, and workflow audit trail.")
+
+    def setup_followups_tab(self):
+        tab = self.rfqs_tabview.tab("Follow-ups")
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_columnconfigure(1, weight=0, minsize=380)
+        tab.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(tab, fg_color="transparent")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="Supplier Follow-up Worklist", font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text="Track RFQ/PO outreach, overdue responses, attachment references, and manual send status.", font=ctk.CTkFont(size=12), text_color=self.THEME["muted"]).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.followup_filter_cb = ctk.CTkComboBox(header, values=["All Open", "Due Today", "Overdue", "RFQ Only", "PO Only", "Responses Received"], width=150, command=lambda choice: self.load_followups())
+        self.followup_filter_cb.grid(row=0, column=1, rowspan=2, padx=5)
+        self.followup_filter_cb.set("All Open")
+        self.make_button(header, "Refresh", command=self.load_followups, variant="secondary", width=90).grid(row=0, column=2, rowspan=2, padx=5)
+        self.make_button(header, "Follow-up Email", command=self.launch_selected_followup_email, variant="primary", width=125).grid(row=0, column=3, rowspan=2, padx=5)
+        self.make_button(header, "Sent Manually", command=lambda: self.update_selected_communication_status("Sent Manually"), variant="success", width=115).grid(row=0, column=4, rowspan=2, padx=5)
+        self.make_button(header, "Response Received", command=self.mark_selected_response_received, variant="warning", width=140).grid(row=0, column=5, rowspan=2, padx=5)
+
+        frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+
+        cols = ("id", "type", "ref", "supplier", "email", "status", "followup", "age", "subject")
+        self.followups_tree = ttk.Treeview(frame, columns=cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 50),
+            ("type", "Type", 55),
+            ("ref", "Workflow", 75),
+            ("supplier", "Supplier", 150),
+            ("email", "Email", 170),
+            ("status", "Status", 105),
+            ("followup", "Follow-up Due", 105),
+            ("age", "Age", 65),
+            ("subject", "Subject", 240),
+        ]:
+            self.followups_tree.heading(col, text=label)
+            self.followups_tree.column(col, width=width, anchor="w")
+        self.followups_tree.tag_configure("overdue", background="#FEE2E2")
+        self.followups_tree.tag_configure("due", background="#FEF3C7")
+        self.followups_tree.tag_configure("received", background="#DCFCE7")
+        self.followups_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.followups_tree.bind("<<TreeviewSelect>>", lambda event: self.show_followup_detail())
+
+        detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
+        detail.grid_columnconfigure(0, weight=1)
+        detail.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(detail, text="Communication Detail", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 8))
+        self.followup_detail_box = ctk.CTkTextbox(detail, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.followup_detail_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        self.followup_detail_box.insert("1.0", "Select a communication row to view recipient, attachment, status, and body preview.")
+        self.followup_detail_box.configure(state="disabled")
+        detail_actions = ctk.CTkFrame(detail, fg_color="transparent")
+        detail_actions.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
+        detail_actions.grid_columnconfigure(0, weight=1)
+        detail_actions.grid_columnconfigure(1, weight=1)
+        self.make_button(detail_actions, "Open Attachment", command=self.open_selected_followup_attachment, variant="secondary").grid(row=0, column=0, sticky="ew", padx=(0, 4), pady=4)
+        self.make_button(detail_actions, "Link Response File", command=self.link_response_file_to_followup, variant="primary").grid(row=0, column=1, sticky="ew", padx=(4, 0), pady=4)
+
+        self.load_followups()
+
+    def load_followups(self, filter_key=None):
+        if not hasattr(self, "followups_tree"):
+            return
+        self.followups_tree.delete(*self.followups_tree.get_children())
+        filter_label = filter_key or (self.followup_filter_cb.get() if hasattr(self, "followup_filter_cb") else "All Open")
+        where = []
+        params = []
+        if filter_label in {"All Open", "followups_due", "overdue_rfq"}:
+            where.append("cl.status NOT IN ('Response Received', 'Closed', 'Cancelled')")
+        if filter_label in {"Due Today", "followups_due"}:
+            where.append("COALESCE(cl.follow_up_due, '') <= date('now')")
+            where.append("COALESCE(cl.follow_up_due, '') <> ''")
+        if filter_label in {"Overdue", "overdue_rfq"}:
+            where.append("COALESCE(cl.follow_up_due, '') < date('now')")
+            where.append("COALESCE(cl.follow_up_due, '') <> ''")
+        if filter_label == "RFQ Only":
+            where.append("cl.workflow_type='RFQ'")
+        if filter_label == "PO Only":
+            where.append("cl.workflow_type='PO'")
+        if filter_label == "Responses Received":
+            where.append("cl.status='Response Received'")
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"""
+            SELECT cl.id, cl.workflow_type, cl.workflow_id, cl.supplier_name, cl.recipient_email,
+                   cl.status, COALESCE(cl.follow_up_due, ''), cl.subject, COALESCE(cl.attachment_path, ''),
+                   COALESCE(cl.body_preview, ''), cl.created_at,
+                   CAST(julianday('now') - julianday(cl.created_at) AS INTEGER) AS age_days
+            FROM communication_log cl
+            {where_sql}
+            ORDER BY
+                CASE WHEN COALESCE(cl.follow_up_due, '') <> '' AND cl.follow_up_due < date('now') THEN 0 ELSE 1 END,
+                COALESCE(cl.follow_up_due, '9999-12-31') ASC,
+                datetime(cl.created_at) DESC
+        """, params)
+        today = __import__("datetime").date.today()
+        for row in c.fetchall():
+            comm_id, workflow_type, workflow_id, supplier, email, status, due, subject, attachment, body, created, age_days = row
+            tags = ()
+            if status == "Response Received":
+                tags = ("received",)
+            elif due:
+                try:
+                    due_date = __import__("datetime").datetime.strptime(due[:10], "%Y-%m-%d").date()
+                    if due_date < today:
+                        tags = ("overdue",)
+                    elif due_date == today:
+                        tags = ("due",)
+                except Exception:
+                    pass
+            self.followups_tree.insert("", tk.END, values=(comm_id, workflow_type, workflow_id, supplier, email, status, due or "N/A", f"{age_days or 0}d", subject), tags=tags)
+        conn.close()
+        if hasattr(self, "followup_detail_box"):
+            self.set_detail_text(self.followup_detail_box, "Select a communication row to view recipient, attachment, status, and body preview.")
+
+    def get_selected_communication_id(self):
+        if not hasattr(self, "followups_tree"):
+            return None
+        sel = self.followups_tree.selection()
+        if not sel:
+            return None
+        vals = self.followups_tree.item(sel[0], "values")
+        try:
+            return int(vals[0])
+        except Exception:
+            return None
+
+    def get_communication_record(self, comm_id):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, workflow_type, workflow_id, supplier_name, recipient_email, subject,
+                   channel, COALESCE(attachment_path, ''), status, COALESCE(body_preview, ''),
+                   COALESCE(follow_up_due, ''), created_at, updated_at
+            FROM communication_log
+            WHERE id=?
+        """, (comm_id,))
+        row = c.fetchone()
+        conn.close()
+        return row
+
+    def show_followup_detail(self):
+        comm_id = self.get_selected_communication_id()
+        if not comm_id:
+            return
+        row = self.get_communication_record(comm_id)
+        if not row:
+            return
+        comm_id, workflow_type, workflow_id, supplier, email, subject, channel, attachment, status, body, due, created, updated = row
+        text = (
+            f"Communication #{comm_id}\n"
+            f"Workflow: {workflow_type}-{workflow_id}\n"
+            f"Supplier: {supplier or 'N/A'}\n"
+            f"Recipient: {email or 'N/A'}\n"
+            f"Subject: {subject or 'N/A'}\n"
+            f"Channel: {channel or 'Email'}\n"
+            f"Status: {status}\n"
+            f"Follow-up Due: {due or 'N/A'}\n"
+            f"Attachment: {attachment or 'None'}\n"
+            f"Created: {created}\n"
+            f"Updated: {updated}\n\n"
+            f"Body Preview:\n{body or 'No body preview saved.'}"
+        )
+        self.set_detail_text(self.followup_detail_box, text)
+
+    def update_selected_communication_status(self, status, response_path=""):
+        comm_id = self.get_selected_communication_id()
+        if not comm_id:
+            messagebox.showwarning("Select Communication", "Please select a follow-up row first.")
+            return
+        row = self.get_communication_record(comm_id)
+        if not row:
+            return
+        _id, workflow_type, workflow_id, supplier, email, subject, channel, attachment, old_status, body, due, created, updated = row
+        note = response_path or f"Communication marked {status}."
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        if response_path:
+            c.execute("""
+                UPDATE communication_log
+                SET status=?, attachment_path=?, follow_up_due='', updated_at=datetime('now')
+                WHERE id=?
+            """, (status, response_path, comm_id))
+        elif status in {"Sent Manually", "Follow-up Sent"}:
+            c.execute("""
+                UPDATE communication_log
+                SET status=?, follow_up_due=date('now', '+3 days'), updated_at=datetime('now')
+                WHERE id=?
+            """, (status, comm_id))
+        else:
+            c.execute("""
+                UPDATE communication_log
+                SET status=?, updated_at=datetime('now')
+                WHERE id=?
+            """, (status, comm_id))
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES (?, ?, ?, ?, ?)
+        """, (workflow_type, workflow_id or 0, "Communication Status Changed", status, note))
+        if workflow_type == "RFQ" and status == "Response Received":
+            c.execute("UPDATE rfq_register SET status='Responded', updated_at=datetime('now') WHERE id=?", (workflow_id,))
+        if workflow_type == "PO" and status == "Response Received":
+            c.execute("UPDATE po_register SET status='Supplier Accepted', updated_at=datetime('now') WHERE id=?", (workflow_id,))
+        conn.commit()
+        conn.close()
+        self.load_followups()
+        if workflow_type == "RFQ" and hasattr(self, "rfq_register_tree"):
+            self.load_rfq_register()
+        if workflow_type == "PO" and hasattr(self, "po_register_tree"):
+            self.load_po_register()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
+
+    def mark_selected_response_received(self):
+        self.update_selected_communication_status("Response Received")
+
+    def launch_selected_followup_email(self):
+        comm_id = self.get_selected_communication_id()
+        if not comm_id:
+            messagebox.showwarning("Select Communication", "Please select a follow-up row first.")
+            return
+        row = self.get_communication_record(comm_id)
+        if not row:
+            return
+        _id, workflow_type, workflow_id, supplier, email, subject, channel, attachment, status, body, due, created, updated = row
+        if not email:
+            messagebox.showwarning("Missing Email", "This communication record has no recipient email.")
+            return
+        import urllib.parse
+        import webbrowser
+        follow_subject = f"Follow-up: {subject or workflow_type + ' request'}"
+        follow_body = (
+            f"Dear {supplier or 'Supplier'} Team,\n\n"
+            "We are following up on the below sourcing communication. Kindly share your update, response, or confirmation at the earliest.\n\n"
+            f"Original subject: {subject or 'N/A'}\n"
+        )
+        if attachment:
+            follow_body += f"Attachment reference: {attachment}\n"
+        follow_body += "\nBest regards,\nProcurement Team"
+        webbrowser.open(f"mailto:{email}?subject={urllib.parse.quote(follow_subject)}&body={urllib.parse.quote(follow_body)}")
+        self.update_selected_communication_status("Follow-up Sent")
+
+    def open_selected_followup_attachment(self):
+        comm_id = self.get_selected_communication_id()
+        if not comm_id:
+            messagebox.showwarning("Select Communication", "Please select a follow-up row first.")
+            return
+        row = self.get_communication_record(comm_id)
+        attachment = row[7] if row else ""
+        if not attachment:
+            messagebox.showwarning("No Attachment", "No attachment path is saved for this communication.")
+            return
+        if not os.path.exists(attachment):
+            messagebox.showerror("File Missing", f"The saved attachment path does not exist:\n{attachment}")
+            return
+        os.startfile(attachment)
+
+    def link_response_file_to_followup(self):
+        comm_id = self.get_selected_communication_id()
+        if not comm_id:
+            messagebox.showwarning("Select Communication", "Please select a follow-up row first.")
+            return
+        response_path = filedialog.askopenfilename(
+            title="Select Supplier Response File",
+            filetypes=[("Supplier Files", "*.pdf *.xlsx *.xls *.png *.jpg *.jpeg *.txt"), ("All Files", "*.*")]
+        )
+        if not response_path:
+            return
+        self.update_selected_communication_status("Response Received", response_path=response_path)
 
     def set_detail_text(self, textbox, text):
         textbox.configure(state="normal")
