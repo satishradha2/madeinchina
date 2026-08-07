@@ -742,6 +742,7 @@ class App(ctk.CTk):
         self.quote_id_counter = 1
         self.is_extracting = False
         self.spinner_idx = 0
+        self._is_closing = False
         
         self.exchange_rates = {
             "USD": 1.0,
@@ -1636,7 +1637,24 @@ class App(ctk.CTk):
     def on_closing(self):
         self.is_extracting = False
         self.chat_is_extracting = False
-        self.quit()
+        self._is_closing = True
+        try:
+            for after_id in self.tk.call("after", "info"):
+                try:
+                    self.after_cancel(after_id)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            import matplotlib.pyplot as plt
+            plt.close("all")
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
 
     def get_validity_display(self, date_str):
         if not date_str or date_str.lower() in ["n/a", "null", "none", ""]:
@@ -5539,6 +5557,7 @@ class App(ctk.CTk):
         canvas = FigureCanvasTkAgg(fig, master=self.timeline_display_scroll)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True, pady=5)
+        plt.close(fig)
 
     def update_preview_gallery_bar(self, row_id, vals):
         for widget in self.preview_gallery_bar.winfo_children():
@@ -8147,6 +8166,7 @@ AI TARIFF & COMPLIANCE DETAIL:
         canvas = FigureCanvasTkAgg(fig, master=self.radar_canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig)
 
     def setup_container_packing_tab(self):
         tab_packing = self.logistics_tabview.tab("🚢 Container Packing")
@@ -8303,6 +8323,7 @@ Sourcing Action Guidance:
         canvas = FigureCanvasTkAgg(fig, master=self.packing_canvas_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig)
 
     def setup_visual_search_tab(self):
         tab_search = self.search_tabview.tab("🔍 AI Visual Search")
