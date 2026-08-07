@@ -1145,7 +1145,17 @@ class App(ctk.CTk):
             border_color=self.THEME["border_strong"],
             text_color=self.THEME["text"]
         )
-        self.search_entry.pack(fill="x", expand=True, padx=5, pady=5)
+        self.quote_worklist_cb = ctk.CTkComboBox(
+            self.search_frame,
+            values=["All", "Needs Review", "Approved", "RFQ Ready", "Expired", "High Risk", "Missing Data"],
+            width=170,
+            height=36,
+            command=self.set_quote_worklist_filter,
+        )
+        self.quote_worklist_cb.set(getattr(self, "quote_worklist_filter", "All"))
+        self.quote_worklist_cb.pack(side="right", padx=(6, 5), pady=5)
+
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=5, pady=5)
         self.search_entry.bind("<KeyRelease>", lambda event: self.filter_table())
 
         # Row 2: Treeview styled table
@@ -1576,9 +1586,9 @@ class App(ctk.CTk):
         routes = {
             "review": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "needs_review"),
             "approved": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "approved"),
-            "approved_ready_rfq": ("RFQs Outreach", self.rfqs_tabview, "RFQ Generator", "approved_ready_rfq"),
+            "approved_ready_rfq": ("Sourcing Analysis", self.sourcing_tabview, "Quotes Comparison", "approved_ready_rfq"),
             "suppliers_not_ready": ("Settings Directory", self.settings_tabview, "Master Data", "supplier_gaps"),
-            "suppliers_ready_po": ("Logistics Costing", self.logistics_tabview, "PO Generator", "po_ready"),
+            "suppliers_ready_po": ("Settings Directory", self.settings_tabview, "Master Data", "po_ready_supplier"),
             "open_exceptions": ("Settings Directory", self.settings_tabview, "Exception Register", "exceptions"),
             "expiring_docs": ("Settings Directory", self.settings_tabview, "Master Data", "doc_expiry"),
             "rfq_open": ("RFQs Outreach", self.rfqs_tabview, "RFQ Register", "rfq_open"),
@@ -1596,16 +1606,17 @@ class App(ctk.CTk):
         self.after(100, lambda: self.apply_dashboard_focus(focus_key))
 
     def apply_dashboard_focus(self, focus_key):
-        if focus_key in {"needs_review", "approved", "expired", "high_risk"}:
+        if focus_key in {"needs_review", "approved", "expired", "high_risk", "approved_ready_rfq"}:
             self.focus_quote_row_by_condition(focus_key)
-        elif focus_key in {"supplier_gaps", "doc_expiry"}:
+        elif focus_key in {"supplier_gaps", "doc_expiry", "po_ready_supplier"}:
             self.focus_supplier_master_by_condition(focus_key)
         elif focus_key == "exceptions":
+            self.set_exception_worklist_filter("Requested")
             self.focus_first_tree_row(getattr(self, "exception_tree", None), status_index=5, preferred_status="Requested")
         elif focus_key == "rfq_open":
             self.focus_first_tree_row(getattr(self, "rfq_register_tree", None), status_index=6, exclude_statuses={"Closed", "Cancelled"})
         elif focus_key == "po_open":
-            self.focus_first_tree_row(getattr(self, "po_register_tree", None), status_index=6, exclude_statuses={"Closed", "Cancelled"})
+            self.focus_first_tree_row(getattr(self, "po_register_tree", None), status_index=7, exclude_statuses={"Closed", "Cancelled"})
 
     def focus_first_tree_row(self, tree, status_index=None, preferred_status=None, exclude_statuses=None):
         if not tree:
@@ -1631,6 +1642,15 @@ class App(ctk.CTk):
     def focus_quote_row_by_condition(self, condition):
         if not hasattr(self, "tree"):
             return
+        filter_map = {
+            "needs_review": "Needs Review",
+            "approved": "Approved",
+            "expired": "Expired",
+            "high_risk": "High Risk",
+            "approved_ready_rfq": "RFQ Ready",
+        }
+        if condition in filter_map:
+            self.set_quote_worklist_filter(filter_map[condition])
         import datetime
         today = datetime.date.today()
         target_id = None
@@ -1638,6 +1658,8 @@ class App(ctk.CTk):
             if condition == "needs_review" and (row.get("review_status") or "Needs Review") != "Needs Review":
                 continue
             if condition == "approved" and row.get("review_status") != "Approved":
+                continue
+            if condition == "approved_ready_rfq" and not self.quote_matches_worklist(row, "RFQ Ready"):
                 continue
             if condition == "high_risk" and "high" not in str(row.get("sourcing_risk") or "").lower():
                 continue
@@ -1664,6 +1686,12 @@ class App(ctk.CTk):
         tree = getattr(self, "supplier_master_tree", None)
         if not tree:
             return
+        if condition == "supplier_gaps":
+            self.set_supplier_worklist_filter("Supplier Gaps")
+        elif condition == "doc_expiry":
+            self.set_supplier_worklist_filter("Expiring Documents")
+        elif condition == "po_ready_supplier":
+            self.set_supplier_worklist_filter("PO Ready")
         target = None
         for item in tree.get_children():
             vals = tree.item(item, "values")
@@ -1675,6 +1703,9 @@ class App(ctk.CTk):
                 target = item
                 break
             if condition == "doc_expiry" and readiness != "Ready for PO":
+                target = item
+                break
+            if condition == "po_ready_supplier" and readiness == "Ready for PO" and verified == "Yes":
                 target = item
                 break
         if not target:
@@ -2270,9 +2301,153 @@ class App(ctk.CTk):
             
             messagebox.showinfo("Database Cleared", "Database reset successfully! All quotes and histories have been cleared.")
 
+    def get_quote_worklist_filter(self):
+        if hasattr(self, "quote_worklist_cb"):
+            return self.quote_worklist_cb.get() or "All"
+        return getattr(self, "quote_worklist_filter", "All")
+
+    def set_quote_worklist_filter(self, choice):
+        self.quote_worklist_filter = choice or "All"
+        if hasattr(self, "quote_worklist_cb"):
+            try:
+                self.quote_worklist_cb.set(self.quote_worklist_filter)
+            except Exception:
+                pass
+        if hasattr(self, "tree"):
+            self.filter_table()
+
+    def quote_has_missing_required_data(self, row):
+        missing_price = row.get("price") in (None, "", "N/A")
+        missing_moq = not row.get("moq") or str(row.get("moq")).strip().upper() == "N/A"
+        missing_lead = not row.get("lead_time") or str(row.get("lead_time")).strip().upper() == "N/A"
+        return missing_price or missing_moq or missing_lead
+
+    def quote_is_expired(self, row):
+        try:
+            import datetime
+            valid = datetime.datetime.strptime(str(row.get("validity_date")), "%Y-%m-%d").date()
+            return valid < datetime.date.today()
+        except Exception:
+            return False
+
+    def quote_is_supplier_rfq_ready(self, row):
+        supplier_name = self.clean_supplier_name(row.get("supplier"))
+        if not supplier_name or supplier_name == "Unknown":
+            return False
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                SELECT id, COALESCE(approval_status, 'Needs Review'), COALESCE(status, 'Active'), COALESCE(contact_verified, 0)
+                FROM supplier_master
+                WHERE LOWER(display_name)=LOWER(?) OR LOWER(legal_name)=LOWER(?)
+                LIMIT 1
+            """, (supplier_name, supplier_name))
+            supplier = c.fetchone()
+            conn.close()
+        except Exception:
+            return False
+        if not supplier:
+            return False
+        supplier_id, approval_status, sourcing_status, contact_verified = supplier
+        if approval_status != "Approved" or sourcing_status in {"Blocked", "Watchlist"} or not contact_verified:
+            return False
+        readiness = self.get_supplier_document_readiness(supplier_name, supplier_id)
+        return readiness["status"] in {"Ready for RFQ", "Ready for PO"}
+
+    def quote_matches_worklist(self, row, worklist):
+        status = row.get("review_status") or "Needs Review"
+        worklist = worklist or "All"
+        if worklist == "All":
+            return True
+        if worklist == "Needs Review":
+            return status == "Needs Review"
+        if worklist == "Approved":
+            return status == "Approved"
+        if worklist == "Expired":
+            return self.quote_is_expired(row)
+        if worklist == "High Risk":
+            return "high" in str(row.get("sourcing_risk") or "").lower()
+        if worklist == "Missing Data":
+            return self.quote_has_missing_required_data(row)
+        if worklist == "RFQ Ready":
+            return status == "Approved" and self.quote_is_supplier_rfq_ready(row)
+        return True
+
+    def set_supplier_worklist_filter(self, choice):
+        self.supplier_worklist_filter = choice or "All"
+        if hasattr(self, "supplier_worklist_cb"):
+            try:
+                self.supplier_worklist_cb.set(self.supplier_worklist_filter)
+            except Exception:
+                pass
+        if hasattr(self, "supplier_master_tree"):
+            self.load_master_data_tables()
+
+    def supplier_has_expiring_documents(self, supplier_id):
+        try:
+            import datetime
+            today = datetime.date.today()
+            soon = today + datetime.timedelta(days=30)
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("""
+                SELECT COALESCE(expiry_date, '')
+                FROM supplier_documents
+                WHERE supplier_master_id=?
+                  AND status IN ('Pending Review', 'Verified')
+                  AND COALESCE(expiry_date, '') != ''
+            """, (supplier_id,))
+            rows = c.fetchall()
+            conn.close()
+            for (expiry_date,) in rows:
+                try:
+                    expiry = datetime.datetime.strptime(str(expiry_date)[:10], "%Y-%m-%d").date()
+                    if expiry <= soon:
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            return False
+        return False
+
+    def supplier_matches_worklist(self, row_values, worklist):
+        worklist = worklist or "All"
+        if worklist == "All":
+            return True
+        supplier_id = int(row_values[0])
+        approval = row_values[2]
+        sourcing_status = row_values[3]
+        readiness = row_values[4]
+        verified = row_values[6]
+        if worklist == "Supplier Gaps":
+            return readiness != "Ready for PO" or verified != "Yes" or approval != "Approved"
+        if worklist == "Contact Gaps":
+            return verified != "Yes"
+        if worklist == "Document Gaps":
+            return readiness != "Ready for PO"
+        if worklist == "PO Ready":
+            return approval == "Approved" and sourcing_status in {"Active", "Preferred"} and verified == "Yes" and readiness == "Ready for PO"
+        if worklist == "Blocked / Watchlist":
+            return sourcing_status in {"Blocked", "Watchlist"} or approval == "Rejected"
+        if worklist == "Expiring Documents":
+            return self.supplier_has_expiring_documents(supplier_id)
+        return True
+
+    def set_exception_worklist_filter(self, choice):
+        self.exception_worklist_filter = choice or "All"
+        if hasattr(self, "exception_worklist_cb"):
+            try:
+                self.exception_worklist_cb.set(self.exception_worklist_filter)
+            except Exception:
+                pass
+        if hasattr(self, "exception_tree"):
+            self.load_exception_register()
+
     # --- Live Search Filter rendering ---
     def filter_table(self):
         query = self.search_entry.get().strip().lower()
+        worklist = self.get_quote_worklist_filter()
         self.tree.delete(*self.tree.get_children())
         
         # Get active currency conversion specs
@@ -2309,6 +2484,9 @@ class App(ctk.CTk):
 
         # Populate tree matching search query
         for row_data in self.extracted_data:
+            if not self.quote_matches_worklist(row_data, worklist):
+                continue
+
             match = False
             if not query:
                 match = True
@@ -2916,6 +3094,23 @@ class App(ctk.CTk):
         self.btn_block_supplier_master.grid(row=0, column=4, sticky="e", padx=(4, 0))
         self.btn_edit_supplier_master = self.make_button(supplier_head, "Edit", command=self.edit_selected_supplier_master, variant="secondary", width=65)
         self.btn_edit_supplier_master.grid(row=0, column=5, sticky="e", padx=(4, 0))
+        supplier_filter_bar = ctk.CTkFrame(supplier_head, fg_color="transparent")
+        supplier_filter_bar.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(8, 0))
+        supplier_filter_bar.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            supplier_filter_bar,
+            text="Worklist:",
+            text_color=self.THEME["muted"],
+            font=ctk.CTkFont(size=12),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self.supplier_worklist_cb = ctk.CTkComboBox(
+            supplier_filter_bar,
+            values=["All", "Supplier Gaps", "Contact Gaps", "Document Gaps", "Expiring Documents", "PO Ready", "Blocked / Watchlist"],
+            width=190,
+            command=self.set_supplier_worklist_filter,
+        )
+        self.supplier_worklist_cb.set(getattr(self, "supplier_worklist_filter", "All"))
+        self.supplier_worklist_cb.grid(row=0, column=1, sticky="w")
 
         supplier_cols = ("id", "display", "approval", "status", "readiness", "score", "verified", "category", "contact")
         self.supplier_master_tree = ttk.Treeview(supplier_panel, columns=supplier_cols, show="headings", style="Treeview")
@@ -3009,7 +3204,7 @@ class App(ctk.CTk):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""
-            SELECT id, display_name, COALESCE(approval_status, 'Needs Review'), status,
+            SELECT id, display_name, COALESCE(approval_status, 'Needs Review'), COALESCE(status, 'Active'),
                    COALESCE(contact_score, 0), COALESCE(contact_verified, 0),
                    category, COALESCE(email, contact_person, '')
             FROM supplier_master
@@ -3021,6 +3216,8 @@ class App(ctk.CTk):
             row.insert(4, readiness)
             row[5] = f"{int(row[5] or 0)}/100"
             row[6] = "Yes" if row[6] else "No"
+            if not self.supplier_matches_worklist(row, getattr(self, "supplier_worklist_filter", "All")):
+                continue
             self.supplier_master_tree.insert("", tk.END, values=row)
 
         c.execute("""
@@ -3497,6 +3694,14 @@ class App(ctk.CTk):
         self.make_button(header, "Approve", command=lambda: self.update_selected_exception_status("Approved"), variant="success", width=85).grid(row=0, column=3, rowspan=2, padx=4)
         self.make_button(header, "Reject", command=lambda: self.update_selected_exception_status("Rejected"), variant="danger", width=75).grid(row=0, column=4, rowspan=2, padx=4)
         self.make_button(header, "Close", command=lambda: self.update_selected_exception_status("Closed"), variant="secondary", width=70).grid(row=0, column=5, rowspan=2, padx=4)
+        self.exception_worklist_cb = ctk.CTkComboBox(
+            header,
+            values=["All", "Requested", "Approved", "Rejected", "Closed"],
+            width=135,
+            command=self.set_exception_worklist_filter,
+        )
+        self.exception_worklist_cb.set(getattr(self, "exception_worklist_filter", "All"))
+        self.exception_worklist_cb.grid(row=0, column=6, rowspan=2, padx=(8, 0))
 
         frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
@@ -3536,7 +3741,20 @@ class App(ctk.CTk):
         self.exception_tree.delete(*self.exception_tree.get_children())
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
-        c.execute("""
+        status_filter = getattr(self, "exception_worklist_filter", "All")
+        if status_filter and status_filter != "All":
+            c.execute("""
+                SELECT id, exception_type, workflow_type, COALESCE(supplier_name, ''),
+                       COALESCE(product_name, ''), status, requested_at
+                FROM exception_register
+                WHERE status=?
+                ORDER BY
+                    CASE status WHEN 'Requested' THEN 0 WHEN 'Approved' THEN 1 WHEN 'Rejected' THEN 2 ELSE 3 END,
+                    datetime(requested_at) DESC,
+                    id DESC
+            """, (status_filter,))
+        else:
+            c.execute("""
             SELECT id, exception_type, workflow_type, COALESCE(supplier_name, ''),
                    COALESCE(product_name, ''), status, requested_at
             FROM exception_register
@@ -3544,7 +3762,7 @@ class App(ctk.CTk):
                 CASE status WHEN 'Requested' THEN 0 WHEN 'Approved' THEN 1 WHEN 'Rejected' THEN 2 ELSE 3 END,
                 datetime(requested_at) DESC,
                 id DESC
-        """)
+            """)
         for row in c.fetchall():
             self.exception_tree.insert("", tk.END, values=row)
         conn.close()
