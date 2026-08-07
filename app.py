@@ -882,7 +882,8 @@ class App(ctk.CTk):
         self.exchange_rates = {
             "USD": 1.0,
             "CNY": 7.25,
-            "EUR": 0.92
+            "EUR": 0.92,
+            "AED": 3.6725
         }
         threading.Thread(target=self.fetch_live_exchange_rates, daemon=True).start()
         self.current_preview_path = ""
@@ -1287,7 +1288,7 @@ class App(ctk.CTk):
         self.currency_lbl = ctk.CTkLabel(self.export_frame, text="Currency:")
         self.currency_lbl.pack(side="left", padx=(10, 5))
         
-        self.currency_cb = ctk.CTkComboBox(self.export_frame, values=["USD ($)", "CNY (¥)", "EUR (€)"], command=self.change_currency, width=120)
+        self.currency_cb = ctk.CTkComboBox(self.export_frame, values=["USD ($)", "CNY (¥)", "EUR (€)", "AED"], command=self.change_currency, width=120)
         self.currency_cb.pack(side="left", padx=5)
 
         self.currency_status_lbl = ctk.CTkLabel(self.export_frame, text="Fetching live rates...", text_color="grey", font=ctk.CTkFont(size=11))
@@ -2138,15 +2139,29 @@ class App(ctk.CTk):
 
     def change_currency(self, choice):
         # Update column header with current currency name
-        currency_choice = self.currency_cb.get()
-        symbol = "$"
-        if "CNY" in currency_choice:
-            symbol = "¥"
-        elif "EUR" in currency_choice:
-            symbol = "€"
+        _code, symbol, _factor = self.get_currency_conversion()
         self.tree.heading("price", text=f"Price ({symbol})")
         self.filter_table()
         self.draw_chart()
+
+    def get_currency_conversion(self):
+        currency_choice = self.currency_cb.get() if hasattr(self, "currency_cb") else "USD ($)"
+        if "CNY" in currency_choice:
+            return "CNY", "¥", self.exchange_rates.get("CNY", 7.25)
+        if "EUR" in currency_choice:
+            return "EUR", "€", self.exchange_rates.get("EUR", 0.92)
+        if "AED" in currency_choice:
+            return "AED", "AED ", self.exchange_rates.get("AED", 3.6725)
+        return "USD", "$", 1.0
+
+    def get_excel_currency_format(self, currency_code):
+        formats = {
+            "USD": '$#,##0.00000',
+            "CNY": '[$¥-804]#,##0.00000',
+            "EUR": '[$€-2] #,##0.00000',
+            "AED": '"AED " #,##0.00000',
+        }
+        return formats.get(currency_code, '$#,##0.00000')
 
     def setup_table(self, parent):
         self.style_workspace_table("Treeview")
@@ -2593,15 +2608,7 @@ class App(ctk.CTk):
         self.tree.delete(*self.tree.get_children())
         
         # Get active currency conversion specs
-        currency_choice = self.currency_cb.get()
-        factor = 1.0
-        symbol = "$"
-        if "CNY" in currency_choice:
-            factor = self.exchange_rates["CNY"]
-            symbol = "¥"
-        elif "EUR" in currency_choice:
-            factor = self.exchange_rates["EUR"]
-            symbol = "€"
+        _currency_code, symbol, factor = self.get_currency_conversion()
         
         # Recalculate best price comparisons from in-memory quotes (baseline USD)
         groups = {}
@@ -4863,18 +4870,7 @@ class App(ctk.CTk):
         category = self.chart_category_cb.get().lower()
         
         # Get active currency conversion specs for visual charts
-        currency_choice = self.currency_cb.get()
-        factor = 1.0
-        symbol = "$"
-        currency_name = "USD"
-        if "CNY" in currency_choice:
-            factor = self.exchange_rates["CNY"]
-            symbol = "¥"
-            currency_name = "CNY"
-        elif "EUR" in currency_choice:
-            factor = self.exchange_rates["EUR"]
-            symbol = "€"
-            currency_name = "EUR"
+        currency_name, symbol, factor = self.get_currency_conversion()
 
         data = []
         for r in self.extracted_data:
@@ -5684,19 +5680,9 @@ class App(ctk.CTk):
                 df = df.drop(columns=["id"])
                 
                 # Retrieve active currency choices
-                currency_choice = self.currency_cb.get()
-                factor = 1.0
-                price_col_header = "Unit Price (USD)"
-                excel_format = '$#,##0.00000'
-                
-                if "CNY" in currency_choice:
-                    factor = self.exchange_rates["CNY"]
-                    price_col_header = "Unit Price (CNY)"
-                    excel_format = '[$¥-804]#,##0.00000'
-                elif "EUR" in currency_choice:
-                    factor = self.exchange_rates["EUR"]
-                    price_col_header = "Unit Price (EUR)"
-                    excel_format = '[$€-2] #,##0.00000'
+                currency_code, _symbol, factor = self.get_currency_conversion()
+                price_col_header = f"Unit Price ({currency_code})"
+                excel_format = self.get_excel_currency_format(currency_code)
 
                 # Apply active conversion to df export
                 df["price"] = df["price"].apply(lambda p: float(p) * factor if isinstance(p, (int, float)) else p)
@@ -5961,15 +5947,7 @@ class App(ctk.CTk):
                 table_data = [headers]
                 for r in filtered_data:
                     # Clean currency display for PDF table
-                    currency_choice = self.currency_cb.get()
-                    symbol = "$"
-                    factor = 1.0
-                    if "CNY" in currency_choice:
-                         symbol = "¥"
-                         factor = self.exchange_rates["CNY"]
-                    elif "EUR" in currency_choice:
-                         symbol = "€"
-                         factor = self.exchange_rates["EUR"]
+                    _currency_code, symbol, factor = self.get_currency_conversion()
                         
                     try:
                         p_val = float(r["price"])
@@ -9128,17 +9106,17 @@ class App(ctk.CTk):
                     rates = data.get("rates", {})
                     cny_rate = rates.get("CNY", 7.25)
                     eur_rate = rates.get("EUR", 0.92)
+                    aed_rate = rates.get("AED", 3.6725)
                     self.exchange_rates["CNY"] = cny_rate
                     self.exchange_rates["EUR"] = eur_rate
-                    print(f"Successfully fetched live exchange rates: CNY={cny_rate:.4f}, EUR={eur_rate:.4f}")
+                    self.exchange_rates["AED"] = aed_rate
+                    print(f"Successfully fetched live exchange rates: CNY={cny_rate:.4f}, EUR={eur_rate:.4f}, AED={aed_rate:.4f}")
                     if hasattr(self, 'currency_status_lbl'):
-                        self.after(0, lambda: self.currency_status_lbl.configure(text=f"Live Rates: 1 USD = {cny_rate:.2f} CNY | {eur_rate:.2f} EUR", text_color="green"))
-        except Exception as e:
-            print(f"Failed to fetch live exchange rates: {e}")
+                        self.after(0, lambda: self.currency_status_lbl.configure(text=f"Live Rates: 1 USD = {cny_rate:.2f} CNY | {eur_rate:.2f} EUR | {aed_rate:.2f} AED", text_color="green"))
         except Exception as e:
             print(f"Failed to fetch live exchange rates: {e}")
             if hasattr(self, 'currency_status_lbl'):
-                self.after(0, lambda: self.currency_status_lbl.configure(text="Offline Rates: 1 USD = 7.25 CNY | 0.92 EUR", text_color="grey"))
+                self.after(0, lambda: self.currency_status_lbl.configure(text="Offline Rates: 1 USD = 7.25 CNY | 0.92 EUR | 3.67 AED", text_color="grey"))
 
     def setup_sourcing_matrix_tab(self):
         self.matrix_tab = self.sourcing_tabview.tab("🧮 Sourcing Matrix")
@@ -9248,15 +9226,7 @@ class App(ctk.CTk):
             self.matrix_tree.heading(s, text=s)
             self.matrix_tree.column(s, width=130, anchor="center")
 
-        currency_choice = self.currency_cb.get()
-        factor = 1.0
-        symbol = "$"
-        if "CNY" in currency_choice:
-            factor = self.exchange_rates["CNY"]
-            symbol = "¥"
-        elif "EUR" in currency_choice:
-            factor = self.exchange_rates["EUR"]
-            symbol = "€"
+        _currency_code, symbol, factor = self.get_currency_conversion()
 
         for p in sorted_products:
             row_vals = [p]
