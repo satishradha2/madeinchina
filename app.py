@@ -1512,7 +1512,7 @@ class App(ctk.CTk):
         self.style_workspace_table("Treeview")
         page = self.pages["Dashboard"]
         page.grid_columnconfigure(0, weight=1)
-        page.grid_rowconfigure(2, weight=1)
+        page.grid_rowconfigure(3, weight=1)
 
         header = ctk.CTkFrame(page, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=6, pady=(2, 12))
@@ -1520,19 +1520,53 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             header,
-            text="Procurement Overview",
+            text="Procurement Command Center",
             font=ctk.CTkFont(size=26, weight="bold"),
             text_color=self.THEME["text"],
         ).grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(
             header,
-            text="Live sourcing status, supplier risk, and next actions from your quote database.",
+            text="A focused control room for quote review, RFQs, approvals, supplier readiness, and purchase orders.",
             font=ctk.CTkFont(size=12),
             text_color=self.THEME["muted"],
         ).grid(row=1, column=0, sticky="w", pady=(3, 0))
 
+        self.dashboard_workflow_frame = ctk.CTkFrame(page, fg_color="transparent")
+        self.dashboard_workflow_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 10))
+        for idx in range(5):
+            self.dashboard_workflow_frame.grid_columnconfigure(idx, weight=1, uniform="workflow")
+        self.dashboard_workflow_values = {}
+        workflow_specs = [
+            ("workflow_quotes", "Quote Intake", "review", "Needs review"),
+            ("workflow_rfq", "RFQ Outreach", "rfq_open", "Open RFQs"),
+            ("workflow_approvals", "Approvals", "pending_approvals", "Pending"),
+            ("workflow_po", "Purchase Orders", "po_open", "Active POs"),
+            ("workflow_compliance", "Supplier Readiness", "suppliers_not_ready", "Gaps"),
+        ]
+        for idx, (key, title, route_key, caption) in enumerate(workflow_specs):
+            step = ctk.CTkFrame(
+                self.dashboard_workflow_frame,
+                fg_color=self.THEME["surface"],
+                border_color=self.THEME["border"],
+                border_width=1,
+                corner_radius=8,
+            )
+            step.grid(row=0, column=idx, sticky="nsew", padx=8, pady=4)
+            ctk.CTkLabel(step, text=f"{idx + 1:02d}", font=ctk.CTkFont(size=11, weight="bold"), text_color=self.THEME["primary"]).pack(anchor="w", padx=14, pady=(12, 0))
+            title_lbl = ctk.CTkLabel(step, text=title, font=ctk.CTkFont(size=14, weight="bold"), text_color=self.THEME["text"])
+            title_lbl.pack(anchor="w", padx=14, pady=(2, 0))
+            value_lbl = ctk.CTkLabel(step, text="0", font=ctk.CTkFont(size=22, weight="bold"), text_color=self.THEME["text"])
+            value_lbl.pack(anchor="w", padx=14, pady=(4, 0))
+            caption_lbl = ctk.CTkLabel(step, text=caption, font=ctk.CTkFont(size=11), text_color=self.THEME["muted"])
+            caption_lbl.pack(anchor="w", padx=14, pady=(0, 12))
+            self.dashboard_workflow_values[key] = value_lbl
+            for widget in (step, title_lbl, value_lbl, caption_lbl):
+                widget.bind("<Button-1>", lambda event, route_key=route_key: self.open_dashboard_route(route_key))
+                widget.bind("<Enter>", lambda event, frame=step: self.animate_dashboard_card(frame, True))
+                widget.bind("<Leave>", lambda event, frame=step: self.animate_dashboard_card(frame, False))
+
         self.dashboard_cards_frame = ctk.CTkFrame(page, fg_color="transparent")
-        self.dashboard_cards_frame.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 14))
+        self.dashboard_cards_frame.grid(row=2, column=0, sticky="ew", padx=0, pady=(0, 14))
         for idx in range(4):
             self.dashboard_cards_frame.grid_columnconfigure(idx, weight=1, uniform="dash_cards")
 
@@ -1540,21 +1574,13 @@ class App(ctk.CTk):
         self.dashboard_card_frames = {}
         card_specs = [
             ("review", "Needs Review", "0"),
-            ("approved_ready_rfq", "RFQ Ready", "0"),
-            ("suppliers_not_ready", "Supplier Gaps", "0"),
-            ("suppliers_ready_po", "PO Ready Suppliers", "0"),
-            ("open_exceptions", "Open Exceptions", "0"),
             ("pending_approvals", "Pending Approvals", "0"),
-            ("expiring_docs", "Doc Expiry", "0"),
             ("rfq_open", "Open RFQs", "0"),
             ("followups_due", "Follow-ups Due", "0"),
-            ("overdue_rfq", "Overdue RFQs", "0"),
             ("po_open", "Open POs", "0"),
             ("po_awaiting_acceptance", "POs Awaiting Acceptance", "0"),
-            ("po_value", "Open PO Value", "$0"),
-            ("approved", "Approved Quotes", "0"),
-            ("expired", "Expired Quotes", "0"),
-            ("high_risk", "High Risk", "0"),
+            ("open_exceptions", "Open Exceptions", "0"),
+            ("expiring_docs", "Doc Expiry", "0"),
         ]
         for idx, (key, title, value) in enumerate(card_specs):
             card = ctk.CTkFrame(
@@ -1579,7 +1605,7 @@ class App(ctk.CTk):
                 widget.bind("<Leave>", lambda event, frame=card: self.animate_dashboard_card(frame, False))
 
         body = ctk.CTkFrame(page, fg_color="transparent")
-        body.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
+        body.grid(row=3, column=0, sticky="nsew", padx=0, pady=0)
         body.grid_columnconfigure(0, weight=2)
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
@@ -1618,6 +1644,7 @@ class App(ctk.CTk):
             self.dashboard_approval_tree.column(col, width=width, anchor="w")
         self.dashboard_approval_tree.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 16))
         self.dashboard_approval_tree.tag_configure("needs_review", background="#FEF3C7", foreground="#92400E")
+        self.dashboard_approval_tree.tag_configure("dashboard_empty", background="#F8FAFC", foreground="#64748B")
         self.dashboard_approval_tree.bind("<Double-1>", lambda event: self.open_dashboard_quote_in_quotes())
 
         right = ctk.CTkFrame(body, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
@@ -1642,6 +1669,16 @@ class App(ctk.CTk):
                 card.configure(border_color=self.THEME["border"], fg_color=self.THEME["surface"])
         except Exception:
             pass
+
+    def set_dashboard_card_value(self, key, value, color=None):
+        label = self.dashboard_cards.get(key) if hasattr(self, "dashboard_cards") else None
+        if label:
+            label.configure(text=str(value), text_color=color or self.THEME["text"])
+
+    def set_dashboard_workflow_value(self, key, value, color=None):
+        label = self.dashboard_workflow_values.get(key) if hasattr(self, "dashboard_workflow_values") else None
+        if label:
+            label.configure(text=str(value), text_color=color or self.THEME["text"])
 
     def update_dashboard_page(self):
         if not hasattr(self, "dashboard_cards"):
@@ -1678,25 +1715,30 @@ class App(ctk.CTk):
         needs_review = [r for r in data if (r.get("review_status") or "Needs Review") == "Needs Review"]
         approved = [r for r in data if r.get("review_status") == "Approved"]
 
-        self.dashboard_cards["review"].configure(text=str(len(needs_review)), text_color=self.THEME["warning"] if needs_review else self.THEME["text"])
-        self.dashboard_cards["approved"].configure(text=str(len(approved)), text_color=self.THEME["success"] if approved else self.THEME["text"])
-        self.dashboard_cards["approved_ready_rfq"].configure(text=str(governance["approved_ready_rfq"]), text_color=self.THEME["success"] if governance["approved_ready_rfq"] else self.THEME["text"])
-        self.dashboard_cards["suppliers_not_ready"].configure(text=str(governance["suppliers_not_ready"]), text_color=self.THEME["warning"] if governance["suppliers_not_ready"] else self.THEME["text"])
-        self.dashboard_cards["suppliers_ready_po"].configure(text=str(governance["suppliers_ready_po"]), text_color=self.THEME["success"] if governance["suppliers_ready_po"] else self.THEME["text"])
-        self.dashboard_cards["open_exceptions"].configure(text=str(governance["open_exceptions"]), text_color=self.THEME["danger"] if governance["open_exceptions"] else self.THEME["text"])
-        self.dashboard_cards["pending_approvals"].configure(text=str(governance["pending_approvals"]), text_color=self.THEME["danger"] if governance["pending_approvals"] else self.THEME["text"])
-        self.dashboard_cards["expiring_docs"].configure(text=str(governance["expiring_docs"]), text_color=self.THEME["warning"] if governance["expiring_docs"] else self.THEME["text"])
-        self.dashboard_cards["expired"].configure(text=str(expired_count), text_color=self.THEME["danger"] if expired_count else self.THEME["text"])
-        self.dashboard_cards["high_risk"].configure(text=str(len(high_risk)), text_color=self.THEME["danger"] if high_risk else self.THEME["text"])
-        self.dashboard_cards["rfq_open"].configure(text=str(workflow["open_rfqs"]), text_color=self.THEME["primary"] if workflow["open_rfqs"] else self.THEME["text"])
-        self.dashboard_cards["followups_due"].configure(text=str(workflow["followups_due"]), text_color=self.THEME["warning"] if workflow["followups_due"] else self.THEME["text"])
-        self.dashboard_cards["overdue_rfq"].configure(text=str(workflow["overdue_rfqs"]), text_color=self.THEME["danger"] if workflow["overdue_rfqs"] else self.THEME["text"])
-        self.dashboard_cards["po_open"].configure(text=str(workflow["open_pos"]), text_color=self.THEME["primary"] if workflow["open_pos"] else self.THEME["text"])
-        self.dashboard_cards["po_awaiting_acceptance"].configure(text=str(workflow["po_awaiting_acceptance"]), text_color=self.THEME["warning"] if workflow["po_awaiting_acceptance"] else self.THEME["text"])
-        self.dashboard_cards["po_value"].configure(text=f"${workflow['open_po_value']:,.0f}", text_color=self.THEME["success"] if workflow["open_po_value"] else self.THEME["text"])
+        self.set_dashboard_workflow_value("workflow_quotes", len(needs_review), self.THEME["warning"] if needs_review else self.THEME["text"])
+        self.set_dashboard_workflow_value("workflow_rfq", workflow["open_rfqs"], self.THEME["primary"] if workflow["open_rfqs"] else self.THEME["text"])
+        self.set_dashboard_workflow_value("workflow_approvals", governance["pending_approvals"], self.THEME["danger"] if governance["pending_approvals"] else self.THEME["text"])
+        self.set_dashboard_workflow_value("workflow_po", workflow["open_pos"], self.THEME["primary"] if workflow["open_pos"] else self.THEME["text"])
+        self.set_dashboard_workflow_value("workflow_compliance", governance["suppliers_not_ready"], self.THEME["warning"] if governance["suppliers_not_ready"] else self.THEME["text"])
+
+        self.set_dashboard_card_value("review", len(needs_review), self.THEME["warning"] if needs_review else self.THEME["text"])
+        self.set_dashboard_card_value("pending_approvals", governance["pending_approvals"], self.THEME["danger"] if governance["pending_approvals"] else self.THEME["text"])
+        self.set_dashboard_card_value("rfq_open", workflow["open_rfqs"], self.THEME["primary"] if workflow["open_rfqs"] else self.THEME["text"])
+        self.set_dashboard_card_value("followups_due", workflow["followups_due"], self.THEME["warning"] if workflow["followups_due"] else self.THEME["text"])
+        self.set_dashboard_card_value("po_open", workflow["open_pos"], self.THEME["primary"] if workflow["open_pos"] else self.THEME["text"])
+        self.set_dashboard_card_value("po_awaiting_acceptance", workflow["po_awaiting_acceptance"], self.THEME["warning"] if workflow["po_awaiting_acceptance"] else self.THEME["text"])
+        self.set_dashboard_card_value("open_exceptions", governance["open_exceptions"], self.THEME["danger"] if governance["open_exceptions"] else self.THEME["text"])
+        self.set_dashboard_card_value("expiring_docs", governance["expiring_docs"], self.THEME["warning"] if governance["expiring_docs"] else self.THEME["text"])
 
         self.dashboard_approval_tree.delete(*self.dashboard_approval_tree.get_children())
         review_rows = sorted(needs_review, key=lambda row: self.quote_review_priority(row), reverse=True)[:18]
+        if not review_rows:
+            self.dashboard_approval_tree.insert(
+                "",
+                tk.END,
+                values=("", "No quote review pending", "Ready", "", "Approved quotes can move to RFQ or PO workflows."),
+                tags=("dashboard_empty",),
+            )
         for r in review_rows:
             price = r.get("price")
             try:
