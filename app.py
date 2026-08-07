@@ -194,10 +194,22 @@ def init_db():
             payment_terms TEXT,
             certifications TEXT,
             notes TEXT,
+            approval_status TEXT DEFAULT 'Needs Review',
+            contact_score INTEGER DEFAULT 0,
+            contact_verified INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    for column_sql in [
+        "ALTER TABLE supplier_master ADD COLUMN approval_status TEXT DEFAULT 'Needs Review'",
+        "ALTER TABLE supplier_master ADD COLUMN contact_score INTEGER DEFAULT 0",
+        "ALTER TABLE supplier_master ADD COLUMN contact_verified INTEGER DEFAULT 0",
+    ]:
+        try:
+            c.execute(column_sql)
+        except sqlite3.OperationalError:
+            pass
     c.execute("""
         CREATE TABLE IF NOT EXISTS product_master (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2270,6 +2282,103 @@ class App(ctk.CTk):
         except Exception as e:
             print(f"Failed to write master data audit log: {e}")
 
+    def calculate_contact_completeness(self, contact_info="", email="", phone="", contact_person="", source_file=""):
+        text = " ".join(str(v or "") for v in [contact_info, email, phone, contact_person, source_file])
+        text_lower = text.lower()
+        score = 0
+        if self.extract_email_from_text(text):
+            score += 35
+        if self.extract_phone_from_text(text):
+            score += 25
+        if any(token in text_lower for token in ["www.", "http://", "https://", ".com", ".cn", ".ae"]):
+            score += 15
+        if contact_person and str(contact_person).strip():
+            score += 10
+        if source_file and str(source_file).strip() not in {"N/A", "None"}:
+            score += 10
+        if contact_info and "placeholder" not in str(contact_info).lower():
+            score += 5
+        return min(score, 100)
+
+    def refresh_supplier_contact_scores(self):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT sm.id, sm.display_name, sm.legal_name, COALESCE(sm.email, ''),
+                   COALESCE(sm.phone, ''), COALESCE(sm.contact_person, ''),
+                   COALESCE(sc.contact_info, ''), COALESCE(sc.source_file, '')
+            FROM supplier_master sm
+            LEFT JOIN supplier_contacts sc
+              ON LOWER(sc.supplier) = LOWER(sm.display_name)
+              OR LOWER(sc.supplier) = LOWER(sm.legal_name)
+        """)
+        rows = c.fetchall()
+        for supplier_id, display, legal, email, phone, contact_person, contact_info, source_file in rows:
+            score = self.calculate_contact_completeness(contact_info, email, phone, contact_person, source_file)
+            verified = 1 if score >= 60 and (email or self.extract_email_from_text(contact_info)) else 0
+            c.execute("""
+                UPDATE supplier_master
+                SET contact_score=?, contact_verified=?, updated_at=datetime('now')
+                WHERE id=?
+            """, (score, verified, supplier_id))
+        conn.commit()
+        conn.close()
+
+    def get_supplier_master_control(self, supplier_name):
+        supplier_clean = self.clean_supplier_name(supplier_name)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, status, COALESCE(approval_status, 'Needs Review'),
+                   COALESCE(contact_score, 0), COALESCE(contact_verified, 0)
+            FROM supplier_master
+            WHERE LOWER(display_name)=LOWER(?) OR LOWER(legal_name)=LOWER(?) OR LOWER(display_name)=LOWER(?)
+            LIMIT 1
+        """, (supplier_clean, supplier_name or "", supplier_name or ""))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "status": row[1] or "Active",
+            "approval_status": row[2] or "Needs Review",
+            "contact_score": int(row[3] or 0),
+            "contact_verified": bool(row[4]),
+        }
+
+    def is_supplier_rfq_eligible(self, supplier_name):
+        control = self.get_supplier_master_control(supplier_name)
+        if not control:
+            return False, "No supplier master record"
+        if control["approval_status"] != "Approved":
+            return False, f"Approval is {control['approval_status']}"
+        if control["status"] != "Preferred":
+            return False, f"Sourcing status is {control['status']}"
+        if not control["contact_verified"]:
+            return False, f"Contact score {control['contact_score']}/100 is not verified"
+        return True, "Eligible"
+
+    def get_supplier_preferred_email(self, supplier_name):
+        supplier_clean = self.clean_supplier_name(supplier_name)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT COALESCE(email, ''), COALESCE(sc.contact_info, '')
+            FROM supplier_master sm
+            LEFT JOIN supplier_contacts sc
+              ON LOWER(sc.supplier) = LOWER(sm.display_name)
+              OR LOWER(sc.supplier) = LOWER(sm.legal_name)
+            WHERE LOWER(sm.display_name)=LOWER(?) OR LOWER(sm.legal_name)=LOWER(?) OR LOWER(sm.display_name)=LOWER(?)
+            LIMIT 1
+        """, (supplier_clean, supplier_name or "", supplier_name or ""))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+        master_email, contact_info = row
+        return self.extract_email_from_text(master_email) or self.extract_email_from_text(contact_info)
+
     def seed_master_data_from_quotes(self, show_message=True):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -2362,6 +2471,7 @@ class App(ctk.CTk):
 
         conn.commit()
         conn.close()
+        self.refresh_supplier_contact_scores()
 
         if hasattr(self, "supplier_master_tree"):
             self.load_master_data_tables()
@@ -2440,7 +2550,10 @@ class App(ctk.CTk):
                 
         conn.commit()
         conn.close()
-        
+        if hasattr(self, "supplier_master_tree"):
+            self.seed_master_data_from_quotes(show_message=False)
+            self.refresh_supplier_contact_scores()
+            self.load_master_data_tables()
         self.load_supplier_directory()
         messagebox.showinfo("Sync Complete", f"Successfully synced supplier directory!\nAdded {synced_count} new supplier cards.")
 
@@ -2481,18 +2594,28 @@ class App(ctk.CTk):
         supplier_head.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
         supplier_head.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(supplier_head, text="Supplier Master", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
-        self.btn_edit_supplier_master = self.make_button(supplier_head, "Edit Supplier", command=self.edit_selected_supplier_master, variant="secondary", width=110)
-        self.btn_edit_supplier_master.grid(row=0, column=1, sticky="e")
+        self.btn_approve_supplier_master = self.make_button(supplier_head, "Approve", command=lambda: self.update_selected_supplier_master_control("Approved", "Active"), variant="success", width=82)
+        self.btn_approve_supplier_master.grid(row=0, column=1, sticky="e", padx=(4, 0))
+        self.btn_prefer_supplier_master = self.make_button(supplier_head, "Preferred", command=lambda: self.update_selected_supplier_master_control("Approved", "Preferred"), variant="primary", width=90)
+        self.btn_prefer_supplier_master.grid(row=0, column=2, sticky="e", padx=(4, 0))
+        self.btn_watch_supplier_master = self.make_button(supplier_head, "Watchlist", command=lambda: self.update_selected_supplier_master_control("Needs Review", "Watchlist"), variant="secondary", width=90)
+        self.btn_watch_supplier_master.grid(row=0, column=3, sticky="e", padx=(4, 0))
+        self.btn_block_supplier_master = self.make_button(supplier_head, "Block", command=lambda: self.update_selected_supplier_master_control("Rejected", "Blocked"), variant="danger", width=70)
+        self.btn_block_supplier_master.grid(row=0, column=4, sticky="e", padx=(4, 0))
+        self.btn_edit_supplier_master = self.make_button(supplier_head, "Edit", command=self.edit_selected_supplier_master, variant="secondary", width=65)
+        self.btn_edit_supplier_master.grid(row=0, column=5, sticky="e", padx=(4, 0))
 
-        supplier_cols = ("id", "display", "status", "category", "contact", "phone")
+        supplier_cols = ("id", "display", "approval", "status", "score", "verified", "category", "contact")
         self.supplier_master_tree = ttk.Treeview(supplier_panel, columns=supplier_cols, show="headings", style="Treeview")
         for col, label, width in [
             ("id", "ID", 45),
-            ("display", "Supplier", 160),
-            ("status", "Status", 85),
-            ("category", "Category", 130),
-            ("contact", "Email / Contact", 150),
-            ("phone", "Phone", 105),
+            ("display", "Supplier", 135),
+            ("approval", "Approval", 90),
+            ("status", "Sourcing", 80),
+            ("score", "Contact", 70),
+            ("verified", "Verified", 70),
+            ("category", "Category", 105),
+            ("contact", "Email / Contact", 130),
         ]:
             self.supplier_master_tree.heading(col, text=label)
             self.supplier_master_tree.column(col, width=width, anchor="w")
@@ -2528,17 +2651,23 @@ class App(ctk.CTk):
         if not hasattr(self, "supplier_master_tree"):
             return
 
+        self.refresh_supplier_contact_scores()
         self.supplier_master_tree.delete(*self.supplier_master_tree.get_children())
         self.product_master_tree.delete(*self.product_master_tree.get_children())
 
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""
-            SELECT id, display_name, status, category, COALESCE(email, contact_person, ''), COALESCE(phone, '')
+            SELECT id, display_name, COALESCE(approval_status, 'Needs Review'), status,
+                   COALESCE(contact_score, 0), COALESCE(contact_verified, 0),
+                   category, COALESCE(email, contact_person, '')
             FROM supplier_master
             ORDER BY display_name
         """)
         for row in c.fetchall():
+            row = list(row)
+            row[4] = f"{int(row[4] or 0)}/100"
+            row[5] = "Yes" if row[5] else "No"
             self.supplier_master_tree.insert("", tk.END, values=row)
 
         c.execute("""
@@ -2562,7 +2691,8 @@ class App(ctk.CTk):
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""
-            SELECT legal_name, display_name, country, city, contact_person, email, phone, category, status, payment_terms, certifications, notes
+            SELECT legal_name, display_name, country, city, contact_person, email, phone,
+                   category, status, approval_status, payment_terms, certifications, notes
             FROM supplier_master WHERE id=?
         """, (supplier_id,))
         row = c.fetchone()
@@ -2580,6 +2710,7 @@ class App(ctk.CTk):
             ("Phone / WhatsApp", "phone"),
             ("Category", "category"),
             ("Status", "status"),
+            ("Approval Status", "approval_status"),
             ("Payment Terms", "payment_terms"),
             ("Certifications", "certifications"),
             ("Notes", "notes"),
@@ -2642,6 +2773,9 @@ class App(ctk.CTk):
             if field in {"status"}:
                 entry = ctk.CTkComboBox(edit_win, values=["Active", "Preferred", "Watchlist", "Blocked"], width=300)
                 entry.set(values.get(field) or "Active")
+            elif field in {"approval_status"}:
+                entry = ctk.CTkComboBox(edit_win, values=["Needs Review", "Approved", "Rejected"], width=300)
+                entry.set(values.get(field) or "Needs Review")
             else:
                 entry = ctk.CTkEntry(edit_win, width=300)
                 entry.insert(0, "" if values.get(field) is None else str(values.get(field)))
@@ -2661,7 +2795,7 @@ class App(ctk.CTk):
         c.execute("""
             UPDATE supplier_master
             SET legal_name=?, display_name=?, country=?, city=?, contact_person=?, email=?, phone=?,
-                category=?, status=?, payment_terms=?, certifications=?, notes=?, updated_at=datetime('now')
+                category=?, status=?, approval_status=?, payment_terms=?, certifications=?, notes=?, updated_at=datetime('now')
             WHERE id=?
         """, (
             payload.get("legal_name"),
@@ -2673,6 +2807,7 @@ class App(ctk.CTk):
             payload.get("phone"),
             payload.get("category"),
             payload.get("status"),
+            payload.get("approval_status"),
             payload.get("payment_terms"),
             payload.get("certifications"),
             payload.get("notes"),
@@ -2684,7 +2819,35 @@ class App(ctk.CTk):
         """, (supplier_id, "Supplier master edited from Master Data screen."))
         conn.commit()
         conn.close()
+        self.refresh_supplier_contact_scores()
         self.load_master_data_tables()
+        self.load_supplier_directory()
+
+    def update_selected_supplier_master_control(self, approval_status, sourcing_status):
+        sel = self.supplier_master_tree.selection()
+        if not sel:
+            messagebox.showwarning("Select Supplier", "Please select a supplier master record first.")
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        updated = 0
+        for item in sel:
+            supplier_id = int(self.supplier_master_tree.item(item, "values")[0])
+            c.execute("""
+                UPDATE supplier_master
+                SET approval_status=?, status=?, updated_at=datetime('now')
+                WHERE id=?
+            """, (approval_status, sourcing_status, supplier_id))
+            c.execute("""
+                INSERT INTO master_data_audit_log (entity_type, entity_id, action, note)
+                VALUES ('Supplier', ?, 'Governance Status Changed', ?)
+            """, (supplier_id, f"Approval set to {approval_status}; sourcing status set to {sourcing_status}."))
+            updated += 1
+        conn.commit()
+        conn.close()
+        self.load_master_data_tables()
+        self.load_supplier_directory()
+        messagebox.showinfo("Supplier Governance Updated", f"Updated {updated} supplier master record(s).")
 
     def save_product_master_record(self, product_id, payload):
         try:
@@ -3196,6 +3359,8 @@ class App(ctk.CTk):
     def load_supplier_directory(self):
         for widget in self.directory_scroll_frame.winfo_children():
             widget.destroy()
+        if hasattr(self, "supplier_master_tree"):
+            self.refresh_supplier_contact_scores()
             
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -3209,11 +3374,23 @@ class App(ctk.CTk):
             return
             
         for supplier, contact_info, source_file in rows:
+            control = self.get_supplier_master_control(supplier) or {}
+            approval = control.get("approval_status", "No Master")
+            sourcing_status = control.get("status", "Uncontrolled")
+            contact_score = int(control.get("contact_score", self.calculate_contact_completeness(contact_info, source_file=source_file)) or 0)
+            verified = bool(control.get("contact_verified", contact_score >= 60 and self.extract_email_from_text(contact_info)))
+            badge_color = self.THEME["success"] if approval == "Approved" and verified else self.THEME["warning"] if approval != "Rejected" else self.THEME["danger"]
+
             card = ctk.CTkFrame(self.directory_scroll_frame, fg_color=self.THEME["surface"], corner_radius=8, border_width=1, border_color=self.THEME["border"])
             card.pack(fill="x", padx=12, pady=7)
-            
-            title = ctk.CTkLabel(card, text=supplier, font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"])
-            title.pack(anchor="w", padx=16, pady=(12, 4))
+
+            title_row = ctk.CTkFrame(card, fg_color="transparent")
+            title_row.pack(fill="x", padx=16, pady=(12, 4))
+            title = ctk.CTkLabel(title_row, text=supplier, font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"])
+            title.pack(side="left", anchor="w")
+            badge_text = f"{approval} | {sourcing_status} | Contact {contact_score}/100" + (" | Verified" if verified else " | Not verified")
+            badge = ctk.CTkLabel(title_row, text=badge_text, fg_color=badge_color, text_color="white", corner_radius=6, padx=8, pady=3, font=ctk.CTkFont(size=10, weight="bold"))
+            badge.pack(side="right", anchor="e")
             
             info_lbl = ctk.CTkLabel(card, text=contact_info, text_color=self.THEME["muted"], justify="left")
             info_lbl.pack(anchor="w", padx=16, pady=(2, 2))
@@ -3285,10 +3462,17 @@ class App(ctk.CTk):
             new_info = textbox.get("1.0", tk.END).strip()
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO supplier_contacts (supplier, contact_info) VALUES (?, ?)", (supplier, new_info))
+            c.execute("""
+                INSERT INTO supplier_contacts (supplier, contact_info)
+                VALUES (?, ?)
+                ON CONFLICT(supplier) DO UPDATE SET contact_info=excluded.contact_info
+            """, (supplier, new_info))
             conn.commit()
             conn.close()
             
+            if hasattr(self, "supplier_master_tree"):
+                self.refresh_supplier_contact_scores()
+                self.load_master_data_tables()
             self.load_supplier_directory()
             edit_win.destroy()
             
@@ -7778,10 +7962,31 @@ class App(ctk.CTk):
             s = self.clean_supplier_name(r.get("supplier"))
             if s and s != "Unknown":
                 suppliers.add(s)
-        sorted_sups = sorted(list(suppliers))
+        eligible_sups = []
+        excluded_sups = []
+        if hasattr(self, "supplier_master_tree"):
+            self.refresh_supplier_contact_scores()
+        for supplier in sorted(list(suppliers)):
+            is_eligible, reason = self.is_supplier_rfq_eligible(supplier)
+            if is_eligible:
+                eligible_sups.append(supplier)
+            else:
+                excluded_sups.append(f"{supplier}: {reason}")
+        sorted_sups = eligible_sups
 
         if not sorted_sups:
-            messagebox.showwarning("Warning", "No suppliers found in the database to broadcast to.")
+            note = "No RFQ-eligible suppliers. Required: Approved supplier master, Preferred sourcing status, and verified contact score."
+            if excluded_sups:
+                note += " Excluded: " + "; ".join(excluded_sups[:8])
+            self.log_workflow_blocked_attempt("RFQ", "Broadcast Blocked", note)
+            messagebox.showwarning(
+                "No RFQ-Eligible Suppliers",
+                "No suppliers qualify for RFQ broadcast.\n\nRequired:\n"
+                "- Supplier Master approval = Approved\n"
+                "- Sourcing status = Preferred\n"
+                "- Contact completeness verified\n\n"
+                "Open Settings & System > Master Data to approve/prefer suppliers and complete contacts."
+            )
             return
 
         popup = ctk.CTkToplevel(self)
@@ -7790,7 +7995,8 @@ class App(ctk.CTk):
         popup.resizable(False, False)
         popup.attributes("-topmost", True)
 
-        ctk.CTkLabel(popup, text="Select Suppliers for RFQ Outreach", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+        ctk.CTkLabel(popup, text="Select Approved Preferred Suppliers", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(10, 2))
+        ctk.CTkLabel(popup, text="Only verified supplier masters are eligible for broadcast.", text_color=self.THEME["muted"]).pack(pady=(0, 8))
 
         checklist_scroll = ctk.CTkScrollableFrame(popup, height=250)
         checklist_scroll.pack(fill="both", expand=True, padx=20, pady=10)
@@ -7813,6 +8019,10 @@ class App(ctk.CTk):
                 if email_match:
                     email_info = f" ({email_match.group(0)})"
                     supplier_emails[s] = email_match.group(0)
+            preferred_email = self.get_supplier_preferred_email(s)
+            if preferred_email:
+                supplier_emails[s] = preferred_email
+                email_info = f" ({preferred_email})"
             
             ctk.CTkCheckBox(checklist_scroll, text=f"{s}{email_info}", variable=var).pack(anchor="w", pady=4, padx=10)
 
