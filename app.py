@@ -2341,6 +2341,9 @@ class App(ctk.CTk):
         self.tree.tag_configure("best_deal", background="#DCFCE7", foreground="#14532D")
         self.tree.tag_configure("needs_review", background="#FEF3C7", foreground="#92400E")
         self.tree.tag_configure("approved", background="#DCFCE7", foreground="#14532D")
+        self.tree.tag_configure("ready_po", background="#CCFBF1", foreground="#115E59")
+        self.tree.tag_configure("po_gate", background="#DBEAFE", foreground="#1E3A8A")
+        self.tree.tag_configure("expired_quote", background="#FEE2E2", foreground="#991B1B")
         self.tree.tag_configure("rejected", background="#FEE2E2", foreground="#991B1B")
 
     # --- Direct Path Entry Handler ---
@@ -2629,6 +2632,21 @@ class App(ctk.CTk):
         readiness = self.get_supplier_document_readiness(supplier_name, supplier_id)
         return readiness["status"] in {"Ready for RFQ", "Ready for PO"}
 
+    def get_quote_workflow_badge(self, row):
+        status = row.get("review_status") or "Needs Review"
+        if status == "Rejected":
+            return "Rejected", "rejected"
+        if self.quote_is_expired(row):
+            return "Expired", "expired_quote"
+        if status != "Approved":
+            return "Needs Review", "needs_review"
+        risk = str(row.get("sourcing_risk") or row.get("risk") or "").lower()
+        if "high" in risk:
+            return "PO Approval", "po_gate"
+        if self.quote_is_supplier_rfq_ready(row):
+            return "Ready for PO", "ready_po"
+        return "Approved", "approved"
+
     def quote_matches_worklist(self, row, worklist):
         status = row.get("review_status") or "Needs Review"
         worklist = worklist or "All"
@@ -2783,15 +2801,7 @@ class App(ctk.CTk):
                 pass
                 
             status = row_data.get("review_status") or "Needs Review"
-            if status == "Approved":
-                status_display = "Approved"
-                status_tag = "approved"
-            elif status == "Rejected":
-                status_display = "Rejected"
-                status_tag = "rejected"
-            else:
-                status_display = "Needs Review"
-                status_tag = "needs_review"
+            status_display, status_tag = self.get_quote_workflow_badge(row_data)
 
             tags_list = [status_tag]
             if is_best_deal and status == "Approved":
@@ -4168,6 +4178,10 @@ class App(ctk.CTk):
             self.approval_tree.column(col, width=width, anchor="w")
         self.approval_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
         self.approval_tree.bind("<<TreeviewSelect>>", lambda event: self.show_approval_detail())
+        self.approval_tree.tag_configure("approval_requested", background="#FEF3C7", foreground="#92400E")
+        self.approval_tree.tag_configure("approval_approved", background="#DCFCE7", foreground="#14532D")
+        self.approval_tree.tag_configure("approval_rejected", background="#FEE2E2", foreground="#991B1B")
+        self.approval_tree.tag_configure("approval_closed", background="#E2E8F0", foreground="#475569")
 
         detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
@@ -4203,7 +4217,13 @@ class App(ctk.CTk):
         for row in c.fetchall():
             row = list(row)
             row[6] = f"${float(row[6]):,.2f}" if row[6] else "$0.00"
-            self.approval_tree.insert("", tk.END, values=row)
+            tag = {
+                "Requested": "approval_requested",
+                "Approved": "approval_approved",
+                "Rejected": "approval_rejected",
+                "Closed": "approval_closed",
+            }.get(row[7], "approval_closed")
+            self.approval_tree.insert("", tk.END, values=row, tags=(tag,))
         conn.close()
         if hasattr(self, "approval_detail_box"):
             self.set_detail_text(self.approval_detail_box, "Select an approval request to review reason, requester, decision, and audit trail.")
@@ -4924,6 +4944,15 @@ class App(ctk.CTk):
         box.insert("1.0", self.format_readiness_text(title, issues, warnings))
         box.configure(state="disabled")
 
+    def get_po_action_state(self, issues):
+        approval_issues = [issue for issue in issues if "Approval" in issue and "required before PO issuance" in issue]
+        non_approval_issues = [issue for issue in issues if issue not in approval_issues]
+        if non_approval_issues:
+            return "disabled", "Resolve PO Gate"
+        if approval_issues:
+            return "normal", "Request / View Approval"
+        return "normal", "Generate PO PDF"
+
     def update_rfq_readiness_panel(self):
         if not hasattr(self, "rfq_readiness_box"):
             return
@@ -4936,6 +4965,9 @@ class App(ctk.CTk):
             return
         issues, warnings = self.validate_po_ready()
         self.set_readiness_box(self.po_readiness_box, "PO Issuance Gate", issues, warnings)
+        if hasattr(self, "btn_gen_po"):
+            state, label = self.get_po_action_state(issues)
+            self.btn_gen_po.configure(state=state, text=label)
 
     def set_document_preview_text(self, box, text):
         if not box:
@@ -11756,11 +11788,24 @@ Authorized Signature: ___________________________
         if issues:
             note = "; ".join(issues)
             self.log_workflow_blocked_attempt("PO", "Issue PO Blocked", note, quote.get("id") or 0)
-            self.request_exception_for_blockers(issues, "PO", po_num or "PO Draft", quote=quote, supplier_name=supplier, product_name=product)
-            messagebox.showerror(
-                "PO Not Ready",
-                "Fix these issues before issuing the PO:\n\n- " + "\n- ".join(issues)
-            )
+            approval_only = all("Approval" in issue and "required before PO issuance" in issue for issue in issues)
+            if approval_only:
+                messagebox.showinfo(
+                    "Approval Required",
+                    "Approval request is ready or already pending. The Approval Queue will open so the request can be reviewed before issuing the PO:\n\n- "
+                    + "\n- ".join(issues)
+                )
+                self.show_page("Settings Directory")
+                self.set_tab_by_contains(self.settings_tabview, "Approval Queue")
+                if hasattr(self, "approval_filter_cb"):
+                    self.approval_filter_cb.set("Requested")
+                self.load_approval_queue()
+            else:
+                self.request_exception_for_blockers(issues, "PO", po_num or "PO Draft", quote=quote, supplier_name=supplier, product_name=product)
+                messagebox.showerror(
+                    "PO Not Ready",
+                    "Fix these issues before issuing the PO:\n\n- " + "\n- ".join(issues)
+                )
             return
         if warnings and not messagebox.askyesno(
             "PO Risk Warnings",
@@ -12138,6 +12183,11 @@ Authorized Signature: ___________________________
             self.po_register_tree.column(col, width=width, anchor="w")
         self.po_register_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
         self.po_register_tree.bind("<<TreeviewSelect>>", lambda event: self.show_po_register_detail())
+        self.po_register_tree.tag_configure("po_issued", background="#DBEAFE", foreground="#1E3A8A")
+        self.po_register_tree.tag_configure("po_accepted", background="#DCFCE7", foreground="#14532D")
+        self.po_register_tree.tag_configure("po_shipped", background="#FEF3C7", foreground="#92400E")
+        self.po_register_tree.tag_configure("po_closed", background="#E2E8F0", foreground="#475569")
+        self.po_register_tree.tag_configure("po_cancelled", background="#FEE2E2", foreground="#991B1B")
 
         detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
@@ -12175,7 +12225,14 @@ Authorized Signature: ___________________________
             row = list(row)
             row[5] = f"${float(row[5]):.5f}" if row[5] is not None else "N/A"
             row[6] = f"${float(row[6]):,.2f}" if row[6] is not None else "N/A"
-            self.po_register_tree.insert("", tk.END, values=row)
+            tag = {
+                "Issued": "po_issued",
+                "Supplier Accepted": "po_accepted",
+                "Shipped": "po_shipped",
+                "Closed": "po_closed",
+                "Cancelled": "po_cancelled",
+            }.get(row[7], "po_closed")
+            self.po_register_tree.insert("", tk.END, values=row, tags=(tag,))
         conn.close()
         if hasattr(self, "po_detail_box"):
             self.set_detail_text(self.po_detail_box, "Select a PO row to view supplier, value, document path, and workflow audit trail.")
