@@ -341,6 +341,27 @@ def init_db():
         )
     """)
     c.execute("""
+        CREATE TABLE IF NOT EXISTS approval_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            approval_type TEXT,
+            workflow_type TEXT,
+            workflow_id INTEGER,
+            quote_id INTEGER,
+            supplier_name TEXT,
+            product_name TEXT,
+            amount REAL,
+            reason TEXT,
+            status TEXT DEFAULT 'Requested',
+            requested_by TEXT DEFAULT 'Local User',
+            approved_by TEXT,
+            decision_note TEXT,
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            decided_at TEXT,
+            closed_at TEXT,
+            UNIQUE(approval_type, workflow_type, workflow_id, quote_id, status)
+        )
+    """)
+    c.execute("""
         CREATE TABLE IF NOT EXISTS exception_register (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             exception_type TEXT,
@@ -1156,6 +1177,7 @@ class App(ctk.CTk):
         tab_dir = self.settings_tabview.add("📇 Supplier Directory")
         tab_master = self.settings_tabview.add("Master Data")
         tab_exceptions = self.settings_tabview.add("Exception Register")
+        tab_approvals = self.settings_tabview.add("Approval Queue")
         
         settings_card = ctk.CTkFrame(tab_settings, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
         settings_card.pack(pady=20, padx=20, fill="both", expand=True)
@@ -1361,6 +1383,7 @@ class App(ctk.CTk):
 
         self.setup_master_data_tab()
         self.setup_exception_register_tab()
+        self.setup_approval_queue_tab()
 
         # --- PAGE 3: Visual Price Comparison Charts ---
         tab_charts = self.sourcing_tabview.tab("📈 Visual Charts")
@@ -1521,6 +1544,7 @@ class App(ctk.CTk):
             ("suppliers_not_ready", "Supplier Gaps", "0"),
             ("suppliers_ready_po", "PO Ready Suppliers", "0"),
             ("open_exceptions", "Open Exceptions", "0"),
+            ("pending_approvals", "Pending Approvals", "0"),
             ("expiring_docs", "Doc Expiry", "0"),
             ("rfq_open", "Open RFQs", "0"),
             ("followups_due", "Follow-ups Due", "0"),
@@ -1660,6 +1684,7 @@ class App(ctk.CTk):
         self.dashboard_cards["suppliers_not_ready"].configure(text=str(governance["suppliers_not_ready"]), text_color=self.THEME["warning"] if governance["suppliers_not_ready"] else self.THEME["text"])
         self.dashboard_cards["suppliers_ready_po"].configure(text=str(governance["suppliers_ready_po"]), text_color=self.THEME["success"] if governance["suppliers_ready_po"] else self.THEME["text"])
         self.dashboard_cards["open_exceptions"].configure(text=str(governance["open_exceptions"]), text_color=self.THEME["danger"] if governance["open_exceptions"] else self.THEME["text"])
+        self.dashboard_cards["pending_approvals"].configure(text=str(governance["pending_approvals"]), text_color=self.THEME["danger"] if governance["pending_approvals"] else self.THEME["text"])
         self.dashboard_cards["expiring_docs"].configure(text=str(governance["expiring_docs"]), text_color=self.THEME["warning"] if governance["expiring_docs"] else self.THEME["text"])
         self.dashboard_cards["expired"].configure(text=str(expired_count), text_color=self.THEME["danger"] if expired_count else self.THEME["text"])
         self.dashboard_cards["high_risk"].configure(text=str(len(high_risk)), text_color=self.THEME["danger"] if high_risk else self.THEME["text"])
@@ -1702,6 +1727,8 @@ class App(ctk.CTk):
             actions.append(f"Upload or verify compliance documents for {governance['suppliers_not_ready']} approved supplier(s).")
         if governance["open_exceptions"]:
             actions.append(f"Review {governance['open_exceptions']} open exception request(s) in Settings & System.")
+        if governance["pending_approvals"]:
+            actions.append(f"Decide {governance['pending_approvals']} pending approval request(s) before downstream PO issuance.")
         if governance["expiring_docs"]:
             actions.append(f"Renew {governance['expiring_docs']} expired or expiring supplier document(s).")
         if expired_count:
@@ -1743,6 +1770,7 @@ class App(ctk.CTk):
             "suppliers_not_ready": ("Settings Directory", self.settings_tabview, "Master Data", "supplier_gaps"),
             "suppliers_ready_po": ("Settings Directory", self.settings_tabview, "Master Data", "po_ready_supplier"),
             "open_exceptions": ("Settings Directory", self.settings_tabview, "Exception Register", "exceptions"),
+            "pending_approvals": ("Settings Directory", self.settings_tabview, "Approval Queue", "approvals"),
             "expiring_docs": ("Settings Directory", self.settings_tabview, "Master Data", "doc_expiry"),
             "rfq_open": ("RFQs Outreach", self.rfqs_tabview, "RFQ Register", "rfq_open"),
             "followups_due": ("RFQs Outreach", self.rfqs_tabview, "Follow-ups", "followups_due"),
@@ -1769,6 +1797,11 @@ class App(ctk.CTk):
         elif focus_key == "exceptions":
             self.set_exception_worklist_filter("Requested")
             self.focus_first_tree_row(getattr(self, "exception_tree", None), status_index=5, preferred_status="Requested")
+        elif focus_key == "approvals":
+            if hasattr(self, "approval_filter_cb"):
+                self.approval_filter_cb.set("Requested")
+            self.load_approval_queue()
+            self.focus_first_tree_row(getattr(self, "approval_tree", None), status_index=7, preferred_status="Requested")
         elif focus_key == "rfq_open":
             self.focus_first_tree_row(getattr(self, "rfq_register_tree", None), status_index=6, exclude_statuses={"Closed", "Cancelled"})
         elif focus_key in {"followups_due", "overdue_rfq"}:
@@ -1949,6 +1982,7 @@ class App(ctk.CTk):
             "suppliers_not_ready": 0,
             "suppliers_ready_po": 0,
             "open_exceptions": 0,
+            "pending_approvals": 0,
             "expiring_docs": 0,
             "contact_gaps": 0,
         }
@@ -1979,6 +2013,8 @@ class App(ctk.CTk):
 
             c.execute("SELECT COUNT(*) FROM exception_register WHERE status='Requested'")
             snapshot["open_exceptions"] = c.fetchone()[0] or 0
+            c.execute("SELECT COUNT(*) FROM approval_queue WHERE status='Requested'")
+            snapshot["pending_approvals"] = c.fetchone()[0] or 0
 
             c.execute("""
                 SELECT expiry_date
@@ -4063,6 +4099,14 @@ class App(ctk.CTk):
             return
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
+        c.execute("SELECT requested_by FROM exception_register WHERE id=?", (exception_id,))
+        requester_row = c.fetchone()
+        requester = requester_row[0] if requester_row else ""
+        current_user = "Local Approver"
+        if status == "Approved" and requester == current_user:
+            conn.close()
+            messagebox.showerror("Maker/Checker Rule", "The requester cannot approve the same exception request.")
+            return
         if status == "Closed":
             c.execute("""
                 UPDATE exception_register
@@ -4072,9 +4116,9 @@ class App(ctk.CTk):
         else:
             c.execute("""
                 UPDATE exception_register
-                SET status=?, decision_note=?, decided_by='Local User', decided_at=datetime('now')
+                SET status=?, decision_note=?, decided_by=?, decided_at=datetime('now')
                 WHERE id=?
-            """, (status, note.strip(), exception_id))
+            """, (status, note.strip(), current_user, exception_id))
         c.execute("""
             INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
             VALUES ('Exception', ?, 'Status Changed', ?, ?)
@@ -4083,6 +4127,179 @@ class App(ctk.CTk):
         conn.close()
         self.load_exception_register()
         self.show_exception_detail()
+
+    def setup_approval_queue_tab(self):
+        tab = self.settings_tabview.tab("Approval Queue")
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_columnconfigure(1, weight=0, minsize=360)
+        tab.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(tab, fg_color="transparent")
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(14, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="Approval Queue", font=ctk.CTkFont(size=20, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(header, text="Controlled approvals for high-value POs, high-risk quotes, and workflow overrides.", font=ctk.CTkFont(size=12), text_color=self.THEME["muted"]).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self.make_button(header, "Refresh", command=self.load_approval_queue, variant="secondary", width=90).grid(row=0, column=1, rowspan=2, padx=4)
+        self.make_button(header, "Approve", command=lambda: self.update_selected_approval_status("Approved"), variant="success", width=85).grid(row=0, column=2, rowspan=2, padx=4)
+        self.make_button(header, "Reject", command=lambda: self.update_selected_approval_status("Rejected"), variant="danger", width=75).grid(row=0, column=3, rowspan=2, padx=4)
+        self.make_button(header, "Close", command=lambda: self.update_selected_approval_status("Closed"), variant="secondary", width=70).grid(row=0, column=4, rowspan=2, padx=4)
+        self.approval_filter_cb = ctk.CTkComboBox(header, values=["All", "Requested", "Approved", "Rejected", "Closed"], width=130, command=lambda choice: self.load_approval_queue())
+        self.approval_filter_cb.set("Requested")
+        self.approval_filter_cb.grid(row=0, column=5, rowspan=2, padx=(8, 0))
+
+        frame = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        frame.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 16))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(0, weight=1)
+        cols = ("id", "type", "workflow", "quote", "supplier", "product", "amount", "status", "requested")
+        self.approval_tree = ttk.Treeview(frame, columns=cols, show="headings", style="Treeview")
+        for col, label, width in [
+            ("id", "ID", 50),
+            ("type", "Approval Type", 150),
+            ("workflow", "Workflow", 80),
+            ("quote", "Quote", 65),
+            ("supplier", "Supplier", 145),
+            ("product", "Product", 125),
+            ("amount", "Amount", 90),
+            ("status", "Status", 95),
+            ("requested", "Requested", 135),
+        ]:
+            self.approval_tree.heading(col, text=label)
+            self.approval_tree.column(col, width=width, anchor="w")
+        self.approval_tree.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.approval_tree.bind("<<TreeviewSelect>>", lambda event: self.show_approval_detail())
+
+        detail = ctk.CTkFrame(tab, fg_color=self.THEME["surface"], border_color=self.THEME["border"], border_width=1, corner_radius=8)
+        detail.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 16))
+        detail.grid_columnconfigure(0, weight=1)
+        detail.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(detail, text="Approval Detail", font=ctk.CTkFont(size=15, weight="bold"), text_color=self.THEME["text"]).grid(row=0, column=0, sticky="w", padx=14, pady=(14, 8))
+        self.approval_detail_box = ctk.CTkTextbox(detail, wrap="word", fg_color=self.THEME["surface_alt"], text_color=self.THEME["text"], border_width=0)
+        self.approval_detail_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
+        self.approval_detail_box.insert("1.0", "Select an approval request to review reason, requester, decision, and audit trail.")
+        self.approval_detail_box.configure(state="disabled")
+        self.load_approval_queue()
+
+    def load_approval_queue(self):
+        if not hasattr(self, "approval_tree"):
+            return
+        self.approval_tree.delete(*self.approval_tree.get_children())
+        status_filter = self.approval_filter_cb.get() if hasattr(self, "approval_filter_cb") else "Requested"
+        where = ""
+        params = []
+        if status_filter and status_filter != "All":
+            where = "WHERE status=?"
+            params.append(status_filter)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(f"""
+            SELECT id, approval_type, workflow_type, COALESCE(quote_id, 0), supplier_name,
+                   product_name, COALESCE(amount, 0), status, requested_at
+            FROM approval_queue
+            {where}
+            ORDER BY CASE status WHEN 'Requested' THEN 0 WHEN 'Approved' THEN 1 WHEN 'Rejected' THEN 2 ELSE 3 END,
+                     datetime(requested_at) DESC, id DESC
+        """, params)
+        for row in c.fetchall():
+            row = list(row)
+            row[6] = f"${float(row[6]):,.2f}" if row[6] else "$0.00"
+            self.approval_tree.insert("", tk.END, values=row)
+        conn.close()
+        if hasattr(self, "approval_detail_box"):
+            self.set_detail_text(self.approval_detail_box, "Select an approval request to review reason, requester, decision, and audit trail.")
+
+    def get_selected_approval_id(self):
+        if not hasattr(self, "approval_tree"):
+            return None
+        sel = self.approval_tree.selection()
+        if not sel:
+            return None
+        vals = self.approval_tree.item(sel[0], "values")
+        try:
+            return int(vals[0])
+        except Exception:
+            return None
+
+    def show_approval_detail(self):
+        approval_id = self.get_selected_approval_id()
+        if not approval_id:
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT approval_type, workflow_type, workflow_id, quote_id, supplier_name, product_name,
+                   amount, reason, status, requested_by, approved_by, decision_note,
+                   requested_at, decided_at, closed_at
+            FROM approval_queue
+            WHERE id=?
+        """, (approval_id,))
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return
+        approval_type, workflow_type, workflow_id, quote_id, supplier, product, amount, reason, status, requested_by, approved_by, decision_note, requested_at, decided_at, closed_at = row
+        audit = "\n\n".join(self.get_workflow_audit_lines(workflow_type, workflow_id or quote_id or 0))
+        text = (
+            f"Approval #{approval_id}\n"
+            f"Type: {approval_type}\n"
+            f"Status: {status}\n"
+            f"Workflow: {workflow_type}-{workflow_id or 'N/A'}\n"
+            f"Quote ID: {quote_id or 'N/A'}\n"
+            f"Supplier: {supplier or 'N/A'}\n"
+            f"Product: {product or 'N/A'}\n"
+            f"Amount: ${float(amount or 0):,.2f}\n\n"
+            f"Reason:\n{reason or 'N/A'}\n\n"
+            f"Requested By: {requested_by or 'Local User'} at {requested_at}\n"
+            f"Decided By: {approved_by or 'N/A'} at {decided_at or 'N/A'}\n"
+            f"Closed At: {closed_at or 'N/A'}\n"
+            f"Decision Note: {decision_note or 'N/A'}\n\n"
+            f"Workflow Audit:\n{audit}"
+        )
+        self.set_detail_text(self.approval_detail_box, text)
+
+    def update_selected_approval_status(self, status):
+        approval_id = self.get_selected_approval_id()
+        if not approval_id:
+            messagebox.showwarning("Select Approval", "Please select an approval request first.")
+            return
+        note = simpledialog.askstring("Decision Note", f"Enter note for {status.lower()} decision:")
+        if note is None:
+            return
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT workflow_type, workflow_id, quote_id, requested_by FROM approval_queue WHERE id=?", (approval_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return
+        workflow_type, workflow_id, quote_id, requested_by = row
+        current_user = "Local Approver"
+        if status == "Approved" and requested_by == current_user:
+            conn.close()
+            messagebox.showerror("Maker/Checker Rule", "The requester cannot approve the same approval request.")
+            return
+        if status == "Closed":
+            c.execute("""
+                UPDATE approval_queue
+                SET status='Closed', decision_note=?, closed_at=datetime('now')
+                WHERE id=?
+            """, (note.strip(), approval_id))
+        else:
+            c.execute("""
+                UPDATE approval_queue
+                SET status=?, decision_note=?, approved_by=?, decided_at=datetime('now')
+                WHERE id=?
+            """, (status, note.strip(), current_user, approval_id))
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES (?, ?, 'Approval Decision', ?, ?)
+        """, (workflow_type, workflow_id or quote_id or 0, status, note.strip()))
+        conn.commit()
+        conn.close()
+        self.load_approval_queue()
+        self.show_approval_detail()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
 
     def open_manual_exception_dialog(self):
         win = ctk.CTkToplevel(self)
@@ -4297,6 +4514,91 @@ class App(ctk.CTk):
         conn.close()
         if hasattr(self, "dashboard_cards"):
             self.update_dashboard_page()
+
+    def get_po_approval_threshold(self):
+        return 1000.0
+
+    def get_pending_or_approved_approval(self, approval_type, workflow_type, quote_id=None, workflow_id=0):
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, status
+            FROM approval_queue
+            WHERE approval_type=? AND workflow_type=? AND COALESCE(quote_id, 0)=COALESCE(?, 0)
+              AND COALESCE(workflow_id, 0)=COALESCE(?, 0)
+              AND status IN ('Requested', 'Approved')
+            ORDER BY CASE status WHEN 'Approved' THEN 0 ELSE 1 END, id DESC
+            LIMIT 1
+        """, (approval_type, workflow_type, quote_id or 0, workflow_id or 0))
+        row = c.fetchone()
+        conn.close()
+        return row
+
+    def create_approval_request(self, approval_type, workflow_type, workflow_id=0, quote=None, supplier_name="", product_name="", amount=0.0, reason=""):
+        quote = quote or {}
+        existing = self.get_pending_or_approved_approval(approval_type, workflow_type, quote.get("id"), workflow_id)
+        if existing:
+            return existing[0], existing[1]
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO approval_queue (
+                approval_type, workflow_type, workflow_id, quote_id, supplier_name,
+                product_name, amount, reason, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Requested')
+        """, (
+            approval_type,
+            workflow_type,
+            workflow_id or 0,
+            quote.get("id"),
+            supplier_name or quote.get("supplier") or "",
+            product_name or quote.get("product") or "",
+            float(amount or 0.0),
+            reason,
+        ))
+        approval_id = c.lastrowid
+        c.execute("""
+            INSERT INTO workflow_audit_log (workflow_type, workflow_id, action, status, note)
+            VALUES (?, ?, 'Approval Requested', 'Requested', ?)
+        """, (workflow_type, workflow_id or quote.get("id") or 0, f"{approval_type}: {reason}"))
+        conn.commit()
+        conn.close()
+        if hasattr(self, "approval_tree"):
+            self.load_approval_queue()
+        if hasattr(self, "dashboard_cards"):
+            self.update_dashboard_page()
+        return approval_id, "Requested"
+
+    def ensure_po_approval_requirements(self, quote, supplier, product, qty, unit_price, create_requests=False):
+        issues = []
+        amount = float(qty or 0) * float(unit_price or 0)
+        requirements = []
+        if amount >= self.get_po_approval_threshold():
+            requirements.append(("PO Value Approval", f"PO value ${amount:,.2f} meets or exceeds ${self.get_po_approval_threshold():,.0f} approval threshold."))
+        risk = str((quote or {}).get("risk") or (quote or {}).get("sourcing_risk") or "").lower()
+        if "high" in risk:
+            requirements.append(("High Risk PO Approval", "Selected quote carries a high-risk sourcing alert."))
+        for approval_type, reason in requirements:
+            existing = self.get_pending_or_approved_approval(approval_type, "PO", quote.get("id"), 0)
+            if existing:
+                approval_id, status = existing
+            elif create_requests:
+                approval_id, status = self.create_approval_request(
+                    approval_type,
+                    "PO",
+                    workflow_id=0,
+                    quote=quote,
+                    supplier_name=supplier,
+                    product_name=product,
+                    amount=amount,
+                    reason=reason,
+                )
+            else:
+                approval_id, status = "new", "Requested"
+            if status != "Approved":
+                issues.append(f"{approval_type} required before PO issuance (approval #{approval_id}).")
+        return issues
 
     def log_communication_event(self, workflow_type, workflow_id, supplier_name, recipient_email, subject, body="", attachment_path="", status="Drafted"):
         import datetime
@@ -4543,7 +4845,7 @@ class App(ctk.CTk):
             warnings.append("Specifications are very short; add material, size, packing, and quality requirements for a stronger RFQ.")
         return issues, warnings
 
-    def validate_po_ready(self):
+    def validate_po_ready(self, create_approval_requests=False):
         issues = []
         warnings = []
         supplier = self.po_supplier_cb.get().strip()
@@ -4569,6 +4871,15 @@ class App(ctk.CTk):
             issues.append("Payment terms are required.")
         if not self.po_address_entry.get().strip():
             issues.append("Delivery address is required.")
+
+        try:
+            qty = self.parse_positive_int(self.po_qty_entry.get()) or 0
+            unit_price = float(getattr(self, "po_active_price", 0.0) or 0.0)
+        except Exception:
+            qty = 0
+            unit_price = 0.0
+        if quote and quote.get("review_status") == "Approved" and qty and unit_price:
+            issues.extend(self.ensure_po_approval_requirements(quote, supplier, product, qty, unit_price, create_requests=create_approval_requests))
 
         if supplier and supplier not in {"Select Supplier", "No approved quotes"}:
             doc_readiness = self.get_supplier_document_readiness(supplier)
@@ -11430,7 +11741,7 @@ Authorized Signature: ___________________________
         po_num = self.po_number_entry.get().strip()
         address = self.po_address_entry.get().strip()
         payment = self.po_payment_entry.get().strip()
-        issues, warnings = self.validate_po_ready()
+        issues, warnings = self.validate_po_ready(create_approval_requests=True)
         self.update_po_readiness_panel()
         quote = getattr(self, "po_active_quote", None) or {}
         issues, cleared_exceptions = self.filter_blockers_with_approved_exceptions(
